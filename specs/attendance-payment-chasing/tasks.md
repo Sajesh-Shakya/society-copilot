@@ -11,51 +11,113 @@ behavior that depends on all of the above.
 > Chasing). Those tasks are marked accordingly rather than cited against a
 > requirement ID that doesn't exist yet.
 
+## Phase 0 — Deployment Infrastructure
+
+- [x] 0.1 Add a GitHub Actions keep-alive workflow that pings Supabase's REST
+      endpoint on a schedule, so the project (Supabase free tier auto-pauses
+      after 7 days idle) never goes to sleep between real usage — see
+      `.github/workflows/supabase-keepalive.yml`. Requires GitHub repo secrets
+      `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` (separate from the Vercel env
+      vars below — GitHub Actions can't read Vercel's env store).
+- [x] 0.2 Before first deploy, set these in Vercel → Settings → Environment
+      Variables: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`,
+      `SUPABASE_SECRET_KEY` (server-only — never prefix with `NEXT_PUBLIC_`),
+      `GMAIL_USER` / `GMAIL_APP_PASSWORD` (or `RESEND_API_KEY` later), and
+      `CRON_SECRET` (random string used to verify scheduled job requests
+      hitting any cron-triggered route).
+- [x] 0.3 First deploy to Vercel — gives a free `*.vercel.app` URL, usable on
+      any phone browser with no app-store step; committee members can "Add to
+      Home Screen" for an app-like icon.
+  - Note: Vercel Hobby cron is capped at once/day with timing only guaranteed
+    within the scheduled hour — fine for a daily Pluto poll or the weekly
+    chase-email run, but not for AC-7's "sync ~1 hour before each session's
+    start time" (sub-daily, session-specific). See the "Scheduling" decision
+    in `design.md` — that trigger uses Supabase `pg_cron` + Edge Functions
+    instead, decoupled from Vercel's plan limits.
+
 ## Phase 1 — Schema & Migrations
 
-- [ ] 1.1 Migration: `person` table (id, cid, shortcode, email, full_name,
+- [x] 1.1 Migration: `person` table (id, cid, shortcode, email, full_name,
       is_student, identity_confidence, consent_to_reinvite, is_exempt,
       exempt_set_by/at, archived_at, timestamps) — **Enables:** AC-4, AC-5, MP-5, DC-5
-- [ ] 1.2 Migration: `session` table — **Enables:** AC-1, AC-6, AC-7
-- [ ] 1.3 Migration: `product` table — **Enables:** MP-1, MP-2, MP-3
-- [ ] 1.4 Migration: `purchase` table incl. `UNIQUE(source, source_row_id)` — **Enables:** MP-4, MP-5, MP-6
-- [ ] 1.5 Migration: `attendance_record` table incl. `UNIQUE(person_id, session_id)`,
+- [x] 1.2 Migration: `session` table — **Enables:** AC-1, AC-6, AC-7
+- [x] 1.3 Migration: `product` table — **Enables:** MP-1, MP-2, MP-3
+- [x] 1.4 Migration: `purchase` table incl. `UNIQUE(source, source_row_id)` — **Enables:** MP-4, MP-5, MP-6
+- [x] 1.5 Migration: `attendance_record` table incl. `UNIQUE(person_id, session_id)`,
       with `waived_by_purchase_id`'s FK added as a trailing `ALTER TABLE` after
       `purchase` exists — **Enables:** AC-2, MP-1, MP-3
-- [ ] 1.6 Migration: `sync_cursor` table — **Enables:** AC-6, AC-7
-- [ ] 1.7 Migration: `chase_email` table — **Enables:** DC-2, DC-3, DC-4, DC-6
-  - [ ] Verify: all migrations apply cleanly in order on an empty database (no
+- [x] 1.6 Migration: `sync_cursor` table — **Enables:** AC-6, AC-7
+- [x] 1.7 Migration: `chase_email` table — **Enables:** DC-2, DC-3, DC-4, DC-6
+  - [x] Verify: all migrations apply cleanly in order on an empty database (no
         forward-reference errors)
 
 ## Phase 2 — eActivities Sign-up Sync Adapter
 
-- [ ] 2.1 Implement sync using `SocietyDataProvider.getSignups`: fetch the
-      sign-up list for a session and upsert `person` / `attendance_record
-      (source='signup_sync')` rows — **Satisfies:** AC-1
-- [ ] 2.2 Implement the manual sync/refresh trigger, merging new sign-ups
-      without duplicating or losing existing ticks — **Satisfies:** AC-6
+- [x] 2.1 Implement `EactivitiesProvider.getSignup` (`GET
+      /csp/{centre}/signups/{id}` — requires `session.eactivities_signup_id`,
+      see AC-8/task 3.0) and sync: fetch that signup's `Attendees` roster and
+      upsert `person` (CID-priority match, else email, else create) /
+      `attendance_record (source='signup_sync')` rows via `INSERT ... ON
+      CONFLICT (person_id, session_id) DO NOTHING` — **Satisfies:** AC-1
+- [x] 2.2 Implement the manual sync/refresh trigger, merging new sign-ups
+      without duplicating or losing existing ticks; debounce against
+      `session.last_synced_at` (60s) so it can't be spammed into eActivities'
+      rate-limit ban; gated by `SYNC_TRIGGER_SECRET` (flagged by security
+      review — without it, the route is reachable directly with no UI,
+      letting a caller enumerate `sessionId`s to bypass the per-session
+      debounce entirely) until real admin auth exists — **Satisfies:** AC-6
   - [ ] Verify: re-running sync against an unchanged sign-up list produces zero
         new/changed attendance rows
-- [ ] 2.3 Implement the scheduled background job that triggers sync
-      automatically ~1 hour before `session.starts_at` — **Satisfies:** AC-7
-- [ ] 2.4 Update `sync_cursor` for the `eactivities` source after each
-      successful sync
+  - [ ] Verify: a second sync attempt inside the debounce window is rejected
+        without calling eActivities
+  - [ ] Verify: a request without a valid `SYNC_TRIGGER_SECRET` gets 401 and
+        never reaches `syncSessionAttendance`
+- [x] 2.3 Implement the scheduled trigger that syncs each session
+      automatically ~1 hour before its `starts_at`, via Supabase `pg_cron` +
+      an Edge Function dispatcher calling a `CRON_SECRET`-protected route
+      (not Vercel Cron — see `design.md`'s Scheduling decision) — **Satisfies:** AC-7
+- [x] 2.4 Update `sync_cursor` for the `eactivities` source after each
+      successful sync (observability only — the actual per-session
+      debounce/window logic uses `session.last_synced_at`, not this table;
+      see `design.md`'s Architecture Decisions)
+- [x] 2.5 No automatic retries on eActivities 401/403 responses anywhere in
+      this adapter — both are IP-wide bans (1hr / 5min). A failed call
+      throws; callers do not retry it themselves.
 
 ## Phase 3 — Attendance-Ticking UI with Realtime Sync
 
-- [ ] 3.1 Build the attendance screen: list sign-ups for a session, each row
+- [x] 3.0 Build the session-creation admin screen: pick a What's On event
+      (`EactivitiesProvider.getEvents`), then pick which of that event's
+      attached signups represents attendance (`getEvent(eventId)` →
+      `Signups[]` — no automatic way to tell; see AC-8), saving
+      `session.eactivities_event_id` + `eactivities_signup_id` + `title` +
+      `starts_at`. Not built in the Phase 2 pass — flagged there as a
+      precondition for 2.1 that didn't exist yet. Until this exists, test
+      sessions get `eactivities_signup_id` set directly via SQL. —
+      **Satisfies:** AC-8
+
+- [x] 3.1 Build the attendance screen: list sign-ups for a session, each row
       togglable attended/not-attended — **Satisfies:** AC-1
-- [ ] 3.2 Wire the toggle to an idempotent upsert (`INSERT ... ON CONFLICT DO
+- [x] 3.2 Wire the toggle to an idempotent upsert (`INSERT ... ON CONFLICT DO
       NOTHING`) against `UNIQUE(person_id, session_id)` — **Satisfies:** AC-2
   - [ ] Verify: double-ticking the same person for the same session produces
         exactly one `attendance_record` row
   - [ ] Verify: unticking removes exactly the row for that person/session pair
-- [ ] 3.3 Subscribe the attendance screen to Supabase Realtime changes on
+- [x] 3.3 Subscribe the attendance screen to Supabase Realtime changes on
       `attendance_record` scoped to the current `session_id`; reflect remote
       toggles within 2 seconds — **Satisfies:** AC-3
-- [ ] 3.4 Implement fuzzy name search against existing `person` records when a
+- [x] 3.3a **TRACKED GAP, not an oversight:** `attendance_record`'s RLS policy
+      (`attendance_record_select_anon`, added in the 1.5 migration) currently
+      grants `SELECT` to the `anon` role — required for Supabase Realtime's
+      `postgres_changes` to deliver events to the browser at all, since no
+      admin-auth system exists yet (`person`/`purchase`/etc. stay deny-all;
+      `attendance_record` was deliberately split for this reason). Once a
+      real auth system exists, replace `attendance_record_select_anon` with a
+      policy scoped to an authenticated admin role, and confirm Realtime
+      subscriptions still work under it before removing the anon policy.
+- [x] 3.4 Implement fuzzy name search against existing `person` records when a
       searched name isn't in the current sign-up list — **Satisfies:** AC-4
-- [ ] 3.5 Implement the walk-in creation form (email required, shortcode
+- [x] 3.5 Implement the walk-in creation form (email required, shortcode
       optional); records created this way get `identity_confidence =
       'provisional'` — **Satisfies:** AC-5
 
