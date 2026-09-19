@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { requestMagicLink } from "@/lib/auth/actions";
 
+const GENERIC_MESSAGE = "If that email is authorized, a sign-in link has been sent.";
+
 export function LoginForm() {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -14,8 +16,12 @@ export function LoginForm() {
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     startTransition(async () => {
-      const result = await requestMagicLink(email);
-      setMessage(result.message);
+      try {
+        const result = await requestMagicLink(email);
+        setMessage(result.message);
+      } catch {
+        setMessage(GENERIC_MESSAGE);
+      }
     });
   }
 
