@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "playwright test",
+    "test:unit": "playwright test tests/unit",
+    "test:e2e": "playwright test tests/e2e"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
