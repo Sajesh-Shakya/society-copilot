@@ -123,28 +123,44 @@ behavior that depends on all of the above.
 
 ## Phase 4 — Pluto/XLSX Purchase-Ingestion Adapter
 
-- [ ] 4.1 Define the shared internal purchase-ingestion interface used by both
+- [x] 4.1 Define the shared internal purchase-ingestion interface used by both
       the Pluto API poller and the XLSX upload path — **Satisfies:** MP-4
-- [ ] 4.2 Implement the Pluto API polling adapter, writing `purchase` rows with
-      `source='pluto_api'` and updating `sync_cursor` for `pluto` — **Satisfies:** MP-4
-- [ ] 4.3 Implement the XLSX upload adapter, writing `purchase` rows with
+- [ ] 4.2 **TRACKED GAP, not an oversight:** Pluto has no real API contract
+      yet (`core/INTEGRATIONS.md`'s "Pluto adapter" section — "being rolled
+      out progressively... should be treated as a future provider"). Rather
+      than ship a fictional integration against invented endpoints, `lib/pluto/client.ts`
+      is a stub whose `getSales()` throws a descriptive not-implemented
+      error; no poller, no cron wiring. XLSX (4.3) is the only real
+      ingestion path for now. Revisit once Pluto publishes real docs. See
+      `docs/superpowers/plans/2026-09-19-purchase-ingestion.md` Task 3.
+- [x] 4.3 Implement the XLSX upload adapter, writing `purchase` rows with
       `source='xlsx_upload'` — **Satisfies:** MP-4
-- [ ] 4.4 Derive and store `is_student` per purchase row from the raw `Member
-      Type` value (`true` only on an exact `Student` match, `false` otherwise);
+- [x] 4.4 Derive and store `is_student` per purchase row from the raw `Member
+      Type` value (`true` only on an exact, case-insensitive `Student` match,
+      `false` otherwise — see `isStudentMemberType()` in `lib/purchase/types.ts`);
       retain `raw_member_type` for audit — **Satisfies:** MP-5
-- [ ] 4.5 Enforce idempotent ingestion via `UNIQUE(source, source_row_id)`
+- [x] 4.5 Enforce idempotent ingestion via `UNIQUE(source, source_row_id)`
       (hash XLSX rows to derive a stable `source_row_id`) — **Satisfies:** MP-6
-  - [ ] Verify: re-uploading the same XLSX file, or re-polling Pluto past an
+  - [x] Verify: re-uploading the same XLSX file, or re-polling Pluto past an
         already-seen sale, creates zero additional `purchase` rows
+        (verified for XLSX; Pluto path not applicable per 4.2)
 - [ ] 4.6 *(Identity matching — not yet a `requirements.md` item, see scope
       note above)* Implement CID-priority matching for `is_student = true`
       purchase rows, and email-match-or-manual-review routing for `is_student =
-      false` rows, per `source-draft.md`'s Identity & Data Matching section
+      false` rows, per `source-draft.md`'s Identity & Data Matching section.
+      **Partially done:** `lib/purchase/matcher.ts` implements both routing
+      rules against XLSX data now (CID-priority for students, no email
+      fallback; email match for everyone else). Left open because the first
+      verify item below needs Pluto (4.2), which doesn't exist yet.
   - [ ] Verify: an eActivities signup and a later Pluto purchase with the same
         CID but a differently-spelled name resolve to one person record
-  - [ ] Verify: an `is_student = false` row with no email match and no name
+        (blocked on 4.2)
+  - [x] Verify: an `is_student = false` row with no email match and no name
         match ends up in the manual-review queue with `match_status =
-        'unmatched'`, not linked to any person
+        'unmatched'`, not linked to any person. Unmatched rows now also
+        retain `raw_person_name`/`raw_email`/`raw_cid` so the future
+        manual-review queue has something to show (added in the final
+        review's fix round — see the plan's ledger).
 
 ## Phase 5 — Debt Calculation
 
