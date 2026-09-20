@@ -42,7 +42,13 @@ export async function uploadXlsx(formData: FormData): Promise<UploadXlsxResult> 
   }
 
   if (rows.length === 0) {
-    return { success: false, message: "No valid rows found in XLSX" };
+    return {
+      success: false,
+      message:
+        skipped > 0
+          ? `No valid rows found in XLSX — all ${skipped} row(s) failed validation. Check that columns are named name, email, cid, member_type, product_name, purchased_at.`
+          : "No valid rows found in XLSX — the file appears to be empty.",
+    };
   }
 
   const result = await ingestPurchases(rows);

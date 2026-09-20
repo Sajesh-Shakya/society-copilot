@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin';
-import { RawPurchaseRow, PurchaseRecord, IngestionResult, IngestionError } from './types';
+import { RawPurchaseRow, PurchaseRecord, IngestionResult, IngestionError, isStudentMemberType } from './types';
 import { matchOrQueue } from './matcher';
 import { z } from 'zod';
 
@@ -10,7 +10,7 @@ const rawPurchaseRowSchema = z.object({
   personName: z.string().min(1, 'personName is required'),
   personEmail: z.string().optional(),
   personCid: z.string().optional(),
-  memberType: z.string().min(1, 'memberType is required'),
+  memberType: z.string(),
   productName: z.string().min(1, 'productName is required'),
   purchasedAt: z.date({ message: 'purchasedAt must be a valid Date' }),
   source: z.enum(['pluto_api', 'xlsx_upload']),
@@ -46,7 +46,16 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
   // only populates `matched` for rows it actually matched; anything else
   // (including everything in its `unmatched` list) falls through to the
   // 'unmatched' default below.
-  const { matched } = await matchOrQueue(validRows);
+  let matched: Map<string, import('./types').MatchResult>;
+  try {
+    ({ matched } = await matchOrQueue(validRows));
+  } catch (error) {
+    // A transport-level throw would otherwise abort the whole batch with no
+    // partial result. Degrade to "nothing matched" — every row still gets
+    // inserted as unmatched rather than the admin seeing a bare failure.
+    matched = new Map();
+    console.warn('matchOrQueue threw; treating all rows as unmatched for this batch:', error);
+  }
 
   // Step 3: Resolve each row's product, auto-creating a bare `kind: 'other'`
   // row when no product of that name exists yet. Known Phase-4-only
@@ -56,31 +65,40 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
   const uniqueProductNames = [...new Set(validRows.map((row) => row.productName))];
 
   for (const productName of uniqueProductNames) {
-    const { data: existing, error: lookupError } = await admin
-      .from('product')
-      .select('id')
-      .eq('name', productName)
-      .maybeSingle();
+    try {
+      const { data: upserted, error: upsertError } = await admin
+        .from('product')
+        .upsert({ name: productName, kind: 'other' }, { onConflict: 'name', ignoreDuplicates: true })
+        .select('id')
+        .maybeSingle();
 
-    if (lookupError) {
-      // Leave unresolved; every row referencing this product becomes an
-      // error in Step 4 rather than silently being dropped.
-      continue;
-    }
+      if (upsertError) {
+        console.warn(`Product upsert failed for "${productName}":`, upsertError.message);
+        continue;
+      }
 
-    if (existing) {
-      productMap.set(productName, existing.id);
-      continue;
-    }
+      if (upserted) {
+        productMap.set(productName, upserted.id);
+        continue;
+      }
 
-    const { data: created, error: createError } = await admin
-      .from('product')
-      .insert({ name: productName, kind: 'other' })
-      .select('id')
-      .single();
+      // ignoreDuplicates means an existing row returns no data from the
+      // upsert itself — fetch it explicitly. Safe to use maybeSingle() here
+      // because product.name is now unique.
+      const { data: existing, error: lookupError } = await admin
+        .from('product')
+        .select('id')
+        .eq('name', productName)
+        .maybeSingle();
 
-    if (!createError && created) {
-      productMap.set(productName, created.id);
+      if (!lookupError && existing) {
+        productMap.set(productName, existing.id);
+      } else if (lookupError) {
+        console.warn(`Product lookup failed for "${productName}":`, lookupError.message);
+      }
+    } catch (error) {
+      // A transport-level throw here would otherwise abort the whole batch.
+      console.warn(`Product resolution threw for "${productName}":`, error);
     }
   }
 
@@ -100,11 +118,9 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
 
     const matchResult = matched.get(row.externalId);
 
-    // MP-5: is_student = true ONLY on an exact "Student" match; every other
-    // observed or future value (Public, Associate, Staff, unrecognized)
-    // defaults to false. Deliberately case-sensitive, exact string equality
-    // -- not a substring or case-insensitive match.
-    const isStudent = row.memberType === 'Student';
+    // MP-5: is_student derivation — see isStudentMemberType in types.ts for
+    // the exact matching rule (shared with the identity matcher).
+    const isStudent = isStudentMemberType(row.memberType);
 
     purchases.push({
       personId: matchResult?.personId ?? null,
@@ -112,10 +128,26 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
       source: row.source,
       sourceRowId: row.externalId,
       rawMemberType: row.memberType,
+      rawPersonName: row.personName,
+      rawEmail: row.personEmail ?? null,
+      rawCid: row.personCid ?? null,
       isStudent,
       matchStatus: matchResult?.matchStatus ?? 'unmatched',
       purchasedAt: row.purchasedAt,
     });
+  }
+
+  // MP-5 / design.md: is_student reflects the *most recent* purchase by
+  // date, not simply the last row processed. Determine, per matched person,
+  // which purchase in this batch is their latest by purchasedAt — only that
+  // one's is_student value gets applied below.
+  const latestByPerson = new Map<string, (typeof purchases)[number]>();
+  for (const purchase of purchases) {
+    if (!purchase.personId) continue;
+    const current = latestByPerson.get(purchase.personId);
+    if (!current || purchase.purchasedAt > current.purchasedAt) {
+      latestByPerson.set(purchase.personId, purchase);
+    }
   }
 
   // Step 5: Insert idempotently. UNIQUE(source, source_row_id) makes a
@@ -129,54 +161,64 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
   let duplicates = 0;
 
   for (const purchase of purchases) {
-    const { error } = await admin.from('purchase').insert({
-      person_id: purchase.personId,
-      product_id: purchase.productId,
-      source: purchase.source,
-      source_row_id: purchase.sourceRowId,
-      raw_member_type: purchase.rawMemberType,
-      match_status: purchase.matchStatus,
-      purchased_at: purchase.purchasedAt.toISOString(),
-    });
+    try {
+      const { error } = await admin.from('purchase').insert({
+        person_id: purchase.personId,
+        product_id: purchase.productId,
+        source: purchase.source,
+        source_row_id: purchase.sourceRowId,
+        raw_member_type: purchase.rawMemberType,
+        raw_person_name: purchase.rawPersonName,
+        raw_email: purchase.rawEmail,
+        raw_cid: purchase.rawCid,
+        match_status: purchase.matchStatus,
+        purchased_at: purchase.purchasedAt.toISOString(),
+      });
 
-    if (error) {
-      if (error.code === '23505') {
-        // UNIQUE(source, source_row_id) violation -- already ingested.
-        duplicates++;
-      } else {
-        errors.push({
-          rowId: purchase.sourceRowId,
-          reason: error.message,
-          rawRow: rows.find((r) => r.externalId === purchase.sourceRowId)!,
-        });
-      }
-    } else {
-      inserted++;
-
-      if (purchase.personId) {
-        const { error: updateError } = await admin
-          .from('person')
-          .update({ is_student: purchase.isStudent })
-          .eq('id', purchase.personId);
-
-        if (updateError) {
-          // Don't fail the whole ingest over this — the purchase row itself
-          // is already inserted successfully. Surface it as a soft error so
-          // it's visible, but don't roll back or count it against `inserted`.
+      if (error) {
+        if (error.code === '23505') {
+          // UNIQUE(source, source_row_id) violation -- already ingested.
+          duplicates++;
+        } else {
           errors.push({
             rowId: purchase.sourceRowId,
-            reason: `Purchase inserted, but failed to update person.is_student: ${updateError.message}`,
+            reason: error.message,
             rawRow: rows.find((r) => r.externalId === purchase.sourceRowId)!,
           });
         }
+      } else {
+        inserted++;
+
+        if (purchase.personId && latestByPerson.get(purchase.personId) === purchase) {
+          const { error: updateError } = await admin
+            .from('person')
+            .update({ is_student: purchase.isStudent })
+            .eq('id', purchase.personId);
+
+          if (updateError) {
+            errors.push({
+              rowId: purchase.sourceRowId,
+              reason: `Purchase inserted, but failed to update person.is_student: ${updateError.message}`,
+              rawRow: rows.find((r) => r.externalId === purchase.sourceRowId)!,
+            });
+          }
+        }
       }
+    } catch (error) {
+      // A transport-level throw for this one row shouldn't abort every
+      // remaining row in the batch.
+      errors.push({
+        rowId: purchase.sourceRowId,
+        reason: error instanceof Error ? error.message : 'Unexpected error during insert',
+        rawRow: rows.find((r) => r.externalId === purchase.sourceRowId)!,
+      });
     }
   }
 
   return { inserted, duplicates, errors };
 }
 
-export async function applyWaivers(personId: string, purchaseId: string): Promise<void> {
+export async function applyWaivers(_personId: string, _purchaseId: string): Promise<void> {
   // (Phase 5 scope — not this task; stub for interface completeness)
   throw new Error('Not implemented');
 }

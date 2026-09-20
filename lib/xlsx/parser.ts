@@ -12,7 +12,7 @@ const XlsxRowSchema = z.object({
     .union([z.string(), z.number()])
     .transform((val) => String(val))
     .optional(),
-  member_type: z.string().min(1),
+  member_type: z.string().optional(),
   product_name: z.string().min(1),
   // A date-typed Excel cell comes back as a native JS Date when the
   // workbook is read with `cellDates: true` (see parseXlsxFile below);
@@ -29,17 +29,36 @@ const XlsxRowSchema = z.object({
 });
 
 /**
- * Stable hash of a raw XLSX row, used as the row's externalId for
- * idempotent ingestion (see lib/purchase/types.ts RawPurchaseRow.externalId
- * and lib/purchase/interface.ts ingestPurchases upsert-on-conflict).
+ * Stable hash of a row's canonical (schema-mapped) fields, used as the
+ * row's externalId for idempotent ingestion. Hashing only the fields this
+ * pipeline actually reads — not the whole raw sheet row — means volatile or
+ * extraneous spreadsheet columns (a running total, an "exported at" column)
+ * don't change the hash across re-exports of overlapping data.
  *
- * Uses JSON.stringify over the row as parsed by `xlsx` (key order matches
- * the sheet's column order, which is stable across re-uploads of the same
- * file), so re-uploading an unchanged file reproduces the same hashes.
+ * `occurrenceIndex` disambiguates genuinely distinct purchases that happen
+ * to share every mapped field (same person, product, and date) — without
+ * it they would hash identically and the second would be wrongly treated
+ * as a duplicate of the first.
  */
-export function hashXlsxRow(row: Record<string, unknown>): string {
-  const str = JSON.stringify(row);
-  return crypto.createHash("sha256").update(str).digest("hex");
+export function hashXlsxRow(input: {
+  name: string;
+  email?: string;
+  cid?: string;
+  memberType: string;
+  productName: string;
+  purchasedAt: string; // ISO string
+  occurrenceIndex: number;
+}): string {
+  const canonical = JSON.stringify({
+    name: input.name,
+    email: input.email ?? null,
+    cid: input.cid ?? null,
+    memberType: input.memberType,
+    productName: input.productName,
+    purchasedAt: input.purchasedAt,
+    occurrenceIndex: input.occurrenceIndex,
+  });
+  return crypto.createHash("sha256").update(canonical).digest("hex");
 }
 
 export interface ParseXlsxResult {
@@ -67,17 +86,43 @@ export function parseXlsxFile(buffer: Buffer): ParseXlsxResult {
   const result: RawPurchaseRow[] = [];
   let skipped = 0;
 
+  // Counts occurrences of each canonical (pre-hash) key so that repeated
+  // identical rows within one file get distinct, but re-upload-stable,
+  // hashes — see hashXlsxRow's doc comment.
+  const occurrenceCounts = new Map<string, number>();
+
   for (const row of rows) {
     try {
       const validated = XlsxRowSchema.parse(row);
-      const rowHash = hashXlsxRow(row);
+      const memberType = validated.member_type ?? "";
+
+      const canonicalKey = JSON.stringify({
+        name: validated.name,
+        email: validated.email ?? null,
+        cid: validated.cid ?? null,
+        memberType,
+        productName: validated.product_name,
+        purchasedAt: validated.purchased_at,
+      });
+      const occurrenceIndex = occurrenceCounts.get(canonicalKey) ?? 0;
+      occurrenceCounts.set(canonicalKey, occurrenceIndex + 1);
+
+      const rowHash = hashXlsxRow({
+        name: validated.name,
+        email: validated.email,
+        cid: validated.cid,
+        memberType,
+        productName: validated.product_name,
+        purchasedAt: validated.purchased_at,
+        occurrenceIndex,
+      });
 
       result.push({
         externalId: rowHash,
         personName: validated.name,
         personEmail: validated.email,
         personCid: validated.cid,
-        memberType: validated.member_type,
+        memberType,
         productName: validated.product_name,
         purchasedAt: new Date(validated.purchased_at),
         source: "xlsx_upload" as const,

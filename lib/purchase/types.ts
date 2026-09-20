@@ -17,6 +17,15 @@ export interface MatchResult {
   confidence?: 'high' | 'medium' | 'low';
 }
 
+// MP-5: is_student = true for any case-insensitive match of "Student";
+// every other observed or future value (Public, Associate, Staff,
+// unrecognized, blank) defaults to false. Shared by the matcher (which
+// rows to attempt CID-only matching on) and the ingest path (which value
+// to persist), so both agree on what "student" means.
+export function isStudentMemberType(memberType: string): boolean {
+  return memberType.trim().toLowerCase() === 'student';
+}
+
 // Final record ready to insert
 export interface PurchaseRecord {
   personId: string | null;
@@ -24,6 +33,9 @@ export interface PurchaseRecord {
   source: 'pluto_api' | 'xlsx_upload';
   sourceRowId: string;
   rawMemberType: string;
+  rawPersonName: string;
+  rawEmail: string | null;
+  rawCid: string | null;
   isStudent: boolean;
   matchStatus: MatchResult['matchStatus'];
   purchasedAt: Date;

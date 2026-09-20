@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin';
-import { RawPurchaseRow, MatchResult } from './types';
+import { RawPurchaseRow, MatchResult, isStudentMemberType } from './types';
 
 export async function matchPersonRecord(row: RawPurchaseRow): Promise<MatchResult> {
   const admin = createAdminClient();
@@ -18,16 +18,18 @@ export async function matchPersonRecord(row: RawPurchaseRow): Promise<MatchResul
   }
 
   // Rule 2: If is_student = true and CID didn't match, stop here (no email fallback for students)
-  if (row.personCid && row.memberType.toLowerCase() === 'student') {
+  if (row.personCid && isStudentMemberType(row.memberType)) {
     return { matchStatus: 'unmatched' };
   }
 
-  // Rule 3: For non-students (or students with no CID), try email match
+  // Rule 3: For non-students (or students with no CID), try email match.
+  // person.email is stored verbatim (not normalized) elsewhere in this
+  // codebase, so match case-insensitively rather than assuming lowercase.
   if (row.personEmail) {
     const { data } = await admin
       .from('person')
       .select('id')
-      .eq('email', row.personEmail.toLowerCase())
+      .ilike('email', row.personEmail)
       .maybeSingle();
 
     if (data) {
