@@ -8,6 +8,7 @@
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { parseXlsxFile } from "./parser";
 import { ingestPurchases } from "@/lib/purchase/interface";
+import { RawPurchaseRow } from "@/lib/purchase/types";
 
 export interface UploadXlsxResult {
   success: boolean;
@@ -27,7 +28,18 @@ export async function uploadXlsx(formData: FormData): Promise<UploadXlsxResult> 
   }
 
   const buffer = await file.arrayBuffer();
-  const rows = parseXlsxFile(Buffer.from(buffer));
+
+  let rows: RawPurchaseRow[];
+  let skipped: number;
+  try {
+    ({ rows, skipped } = parseXlsxFile(Buffer.from(buffer)));
+  } catch (error) {
+    console.warn("Failed to parse XLSX file:", error);
+    return {
+      success: false,
+      message: "Could not parse file — is it a valid XLSX file?",
+    };
+  }
 
   if (rows.length === 0) {
     return { success: false, message: "No valid rows found in XLSX" };
@@ -35,8 +47,10 @@ export async function uploadXlsx(formData: FormData): Promise<UploadXlsxResult> 
 
   const result = await ingestPurchases(rows);
 
+  const skippedNote = skipped > 0 ? ` (${skipped} skipped as invalid)` : "";
+
   return {
     success: true,
-    message: `Ingested ${result.inserted} new purchases (${result.duplicates} duplicates, ${result.errors.length} errors)`,
+    message: `Parsed ${rows.length} rows${skippedNote}. Ingested ${result.inserted} new purchases (${result.duplicates} duplicates, ${result.errors.length} errors)`,
   };
 }
