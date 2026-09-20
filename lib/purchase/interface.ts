@@ -120,6 +120,11 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
 
   // Step 5: Insert idempotently. UNIQUE(source, source_row_id) makes a
   // repeat ingest (re-uploaded file, re-run poll) a duplicate, not an error.
+  // On a fresh (non-duplicate) insert for a matched row, also sync the
+  // derived is_student onto the person record -- design.md documents
+  // person.is_student as "derived from Member Type at last known
+  // purchase/signup". A duplicate does NOT re-trigger this, so re-running
+  // the same ingest has no additional side effects.
   let inserted = 0;
   let duplicates = 0;
 
@@ -147,6 +152,24 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
       }
     } else {
       inserted++;
+
+      if (purchase.personId) {
+        const { error: updateError } = await admin
+          .from('person')
+          .update({ is_student: purchase.isStudent })
+          .eq('id', purchase.personId);
+
+        if (updateError) {
+          // Don't fail the whole ingest over this — the purchase row itself
+          // is already inserted successfully. Surface it as a soft error so
+          // it's visible, but don't roll back or count it against `inserted`.
+          errors.push({
+            rowId: purchase.sourceRowId,
+            reason: `Purchase inserted, but failed to update person.is_student: ${updateError.message}`,
+            rawRow: rows.find((r) => r.externalId === purchase.sourceRowId)!,
+          });
+        }
+      }
     }
   }
 
