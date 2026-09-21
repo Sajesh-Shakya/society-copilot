@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { applyPersonExempt } from "@/lib/person/actions";
+import { applyPersonExempt } from "@/lib/person/exempt-writer";
 
 const TEST_ADMIN_EMAIL = "test-admin@example.test";
 
