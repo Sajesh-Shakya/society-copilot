@@ -174,9 +174,13 @@ behavior that depends on all of the above.
 - [x] 5.3 Implement waiver logic: when a covering pass/membership is
       purchased, set `waived_by_purchase_id` on the historical attendance rows
       it covers, without deleting them — **Satisfies:** MP-3
-  - [x] Verify: a person with 3 unpaid attendance records who buys a covering
-        term pass has debt drop to 0, all 3 rows get a non-null
-        `waived_by_purchase_id`, and none of them are deleted
+  - [x] Verify: a person with unpaid attendance records who buys a covering
+        term pass has debt drop to 0, every one of those rows gets a
+        non-null `waived_by_purchase_id`, and none of them are deleted
+        (exercised with 2 unpaid records in the term-pass test and 3 in
+        the session-pass test — the term/annual branch waives ALL
+        outstanding debt regardless of count, so the mechanism is
+        count-agnostic)
 
 ## Phase 6 — Chase Email Generator
 

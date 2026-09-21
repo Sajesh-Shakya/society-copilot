@@ -10,7 +10,7 @@
     "test": "playwright test",
     "test:unit": "playwright test tests/unit",
     "test:e2e": "playwright test tests/e2e",
-    "test:integration": "playwright test tests/integration"
+    "test:integration": "playwright test --config=playwright.integration.config.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

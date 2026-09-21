@@ -7,27 +7,53 @@ import { applyWaivers } from "@/lib/purchase/interface";
 const admin = createAdminClient();
 
 test.describe("applyWaivers", () => {
-  let personId: string;
+  let personId = "";
   let sessionIds: string[] = [];
   let productId: string | undefined;
   let purchaseId: string | undefined;
 
   test.afterEach(async () => {
-    if (purchaseId) {
-      await admin.from("purchase").delete().eq("id", purchaseId);
-      purchaseId = undefined;
-    }
-    if (productId) {
-      await admin.from("product").delete().eq("id", productId);
-      productId = undefined;
-    }
     if (sessionIds.length > 0) {
-      await admin.from("attendance_record").delete().in("session_id", sessionIds);
-      await admin.from("session").delete().in("id", sessionIds);
+      const { error: attendanceDeleteError } = await admin
+        .from("attendance_record")
+        .delete()
+        .in("session_id", sessionIds);
+      if (attendanceDeleteError) {
+        throw new Error(`Cleanup failed deleting attendance_record: ${attendanceDeleteError.message}`);
+      }
+
+      const { error: sessionDeleteError } = await admin
+        .from("session")
+        .delete()
+        .in("id", sessionIds);
+      if (sessionDeleteError) {
+        throw new Error(`Cleanup failed deleting session: ${sessionDeleteError.message}`);
+      }
       sessionIds = [];
     }
+
+    if (purchaseId) {
+      const { error: purchaseDeleteError } = await admin.from("purchase").delete().eq("id", purchaseId);
+      if (purchaseDeleteError) {
+        throw new Error(`Cleanup failed deleting purchase: ${purchaseDeleteError.message}`);
+      }
+      purchaseId = undefined;
+    }
+
+    if (productId) {
+      const { error: productDeleteError } = await admin.from("product").delete().eq("id", productId);
+      if (productDeleteError) {
+        throw new Error(`Cleanup failed deleting product: ${productDeleteError.message}`);
+      }
+      productId = undefined;
+    }
+
     if (personId) {
-      await admin.from("person").delete().eq("id", personId);
+      const { error: personDeleteError } = await admin.from("person").delete().eq("id", personId);
+      if (personDeleteError) {
+        throw new Error(`Cleanup failed deleting person: ${personDeleteError.message}`);
+      }
+      personId = "";
     }
   });
 

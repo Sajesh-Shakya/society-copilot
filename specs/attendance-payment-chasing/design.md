@@ -145,12 +145,47 @@ create table chase_email (
   scheduled sync's own cron interval provides backoff for free — a failed
   attempt just waits for the next tick rather than retrying in-process.
 
+- **A term/annual pass purchase waives ALL of a person's currently-outstanding
+  debt, not just debt within that pass's own forward coverage window.**
+  MP-3's "covers prior unpaid attendance" is read broadly: buying the pass
+  clears past dues entirely, matching the common real policy of "buy the
+  membership, past dues forgiven." MP-1/MP-2's forward-looking "active pass"
+  exclusion is handled separately and continuously by `outstanding_attendance`'s
+  own date-window check — the waiver above is specifically the retroactive
+  case. A `session_pass` purchase, by contrast, waives only up to its
+  `covers_sessions` count of the person's *oldest* outstanding debt (FIFO) —
+  it has a limited number of credits.
+  **TRACKED GAP, not an oversight:** a session_pass currently provides no
+  FORWARD coverage — sessions attended after purchase still become debt
+  and are never automatically waived by that same purchase's remaining
+  credits. A running session-credit-balance concept (how credits are
+  consumed, whether unused credits expire) is needed before this ships for
+  real session-pack sales, and is not yet designed.
+
+- **A term/annual pass's coverage window is `[purchased_at, purchased_at +
+  product.covers_days)`** — a half-open interval, per-product (not a shared
+  academic-term calendar). `covers_days` is required (via a check
+  constraint on `product`) whenever `kind` is `term_pass` or `annual_pass`,
+  to prevent a half-curated product from silently waiving debt with no
+  forward coverage.
+
+- **A person's chronologically-earliest ATTENDED session
+  (`attendance_record.attended = true`, ordered by `session.starts_at`) is
+  their free trial and never counts as debt.** A no-show is not an
+  attendance for this purpose, so it cannot consume the free trial — and
+  separately, `attendance_record.attended = false` rows never count as
+  debt at all, matching what the attendance-screen's attended/not-attended
+  toggle is for.
+
 ## Open Questions — Needs Human Decision
 
-These are unresolved. No default is assumed anywhere in this spec or its
-schema — `requirements.md` keeps the debt-age threshold as "N days
-(configurable)" (DC-2) and the schema keeps `is_exempt`/audit fields
-unopinionated about who may set them, pending the decisions below.
+These were unresolved as of this section's original writing.
+`requirements.md` keeps the debt-age threshold as "N days (configurable)"
+(DC-2) and the schema keeps `is_exempt`/audit fields unopinionated about
+who may set them, pending the decisions below. (c)'s free-trial sub-issue
+has since been resolved — see the RESOLVED note below and Architecture
+Decisions above. (a), (b), and (c)'s main exemption-authority question
+remain open.
 
 ### a. Chase-email timing threshold
 How many days of unpaid debt should elapse before the first chase email drafts
@@ -184,8 +219,9 @@ debt count would generate a chase email for someone who only ever attended a
 free trial session.
 
 **RESOLVED (2026-09-20):** the debt query (`outstanding_attendance`, see
-`docs/superpowers/plans/2026-09-20-debt-calculation.md`) auto-excludes each
-person's chronologically-earliest `attendance_record` (by `session.starts_at`)
-from debt calculation — no schema flag, no admin action needed. The
-exemption-authority question above (who may set `is_exempt`, and whether a
-reason must be logged) remains open.
+`supabase/migrations/20260920120000_add_debt_calculation_functions.sql`
+and the Architecture Decisions section above) auto-excludes each person's
+chronologically-earliest ATTENDED `attendance_record` (by
+`session.starts_at`) from debt calculation — no schema flag, no admin
+action needed. The exemption-authority question above (who may set
+`is_exempt`, and whether a reason must be logged) remains open.

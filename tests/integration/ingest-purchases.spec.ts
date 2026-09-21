@@ -2,15 +2,21 @@ import { test, expect } from "@playwright/test";
 import { randomUUID } from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getOutstandingDebt } from "@/lib/debt/calculator";
+import { ingestPurchases } from "@/lib/purchase/interface";
+import type { RawPurchaseRow } from "@/lib/purchase/types";
 
 const admin = createAdminClient();
 
-test.describe("getOutstandingDebt", () => {
+test.describe("ingestPurchases", () => {
   let personId = "";
   let sessionIds: string[] = [];
   let productId: string | undefined;
 
   test.afterEach(async () => {
+    // attendance_record must be cleared (or at least un-waived) before
+    // purchase is deleted: attendance_record.waived_by_purchase_id FKs to
+    // purchase, and this suite's own tests cause rows to actually get
+    // waived, so deleting purchase first violates that FK.
     if (sessionIds.length > 0) {
       const { error: attendanceDeleteError } = await admin
         .from("attendance_record")
@@ -30,12 +36,17 @@ test.describe("getOutstandingDebt", () => {
       sessionIds = [];
     }
 
-    if (productId) {
-      const { error: purchaseDeleteError } = await admin.from("purchase").delete().eq("product_id", productId);
+    if (personId) {
+      const { error: purchaseDeleteError } = await admin
+        .from("purchase")
+        .delete()
+        .eq("person_id", personId);
       if (purchaseDeleteError) {
         throw new Error(`Cleanup failed deleting purchase: ${purchaseDeleteError.message}`);
       }
+    }
 
+    if (productId) {
       const { error: productDeleteError } = await admin.from("product").delete().eq("id", productId);
       if (productDeleteError) {
         throw new Error(`Cleanup failed deleting product: ${productDeleteError.message}`);
@@ -52,10 +63,10 @@ test.describe("getOutstandingDebt", () => {
     }
   });
 
-  async function createPerson(): Promise<string> {
+  async function createPerson(email: string): Promise<string> {
     const { data, error } = await admin
       .from("person")
-      .insert({ email: `debt-test-${randomUUID()}@example.test`, full_name: "Debt Test Person" })
+      .insert({ email, full_name: "Ingest Test Person" })
       .select("id")
       .single();
     if (error || !data) throw new Error(`Failed to create test person: ${error?.message}`);
@@ -73,76 +84,81 @@ test.describe("getOutstandingDebt", () => {
 
     const { error: attendanceError } = await admin
       .from("attendance_record")
-      .insert({ person_id: pid, session_id: session.id, source: "manual_tick" });
+      .insert({ person_id: pid, session_id: session.id, source: "manual_tick", attended: true });
     if (attendanceError) throw new Error(`Failed to create test attendance: ${attendanceError.message}`);
 
     return session.id;
   }
 
-  test("a single attendance record is the free trial and does not count as debt", async () => {
-    personId = await createPerson();
-    await createAttendance(personId, "2026-01-01T18:00:00.000Z");
-
-    expect(await getOutstandingDebt(personId)).toBe(0);
-  });
-
-  test("a second attendance record counts as debt (first is the free trial)", async () => {
-    personId = await createPerson();
-    await createAttendance(personId, "2026-01-01T18:00:00.000Z");
-    await createAttendance(personId, "2026-01-08T18:00:00.000Z");
+  test("ingesting a purchase for an already-curated annual pass automatically waives debt", async () => {
+    const email = `ingest-test-${randomUUID()}@example.test`;
+    personId = await createPerson(email);
+    await createAttendance(personId, "2026-01-01T18:00:00.000Z"); // free trial
+    await createAttendance(personId, "2026-01-08T18:00:00.000Z"); // debt #1
 
     expect(await getOutstandingDebt(personId)).toBe(1);
-  });
-
-  test("attendance covered by an active term pass does not count as debt", async () => {
-    personId = await createPerson();
-    await createAttendance(personId, "2026-01-01T18:00:00.000Z"); // free trial
-    await createAttendance(personId, "2026-01-08T18:00:00.000Z"); // would-be debt, but covered below
 
     const { data: product, error: productError } = await admin
       .from("product")
-      .insert({ name: `Test Term Pass ${randomUUID()}`, kind: "term_pass", covers_days: 70 })
-      .select("id")
+      .insert({ name: `Test Annual Pass ${randomUUID()}`, kind: "annual_pass", covers_days: 365 })
+      .select("id, name")
       .single();
     if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
     productId = product.id;
 
-    const { error: purchaseError } = await admin.from("purchase").insert({
-      person_id: personId,
-      product_id: productId,
+    const row: RawPurchaseRow = {
+      externalId: `ingest-test-${randomUUID()}`,
+      personName: "Ingest Test Person",
+      personEmail: email,
+      memberType: "Public",
+      productName: product.name,
+      purchasedAt: new Date("2026-02-01T00:00:00.000Z"),
       source: "xlsx_upload",
-      source_row_id: `debt-test-${randomUUID()}`,
-      purchased_at: "2026-01-05T00:00:00.000Z", // before the covered session
-      match_status: "cid_matched",
-    });
-    if (purchaseError) throw new Error(`Failed to create test purchase: ${purchaseError.message}`);
+    };
 
+    const result = await ingestPurchases([row]);
+
+    expect(result.inserted).toBe(1);
+    expect(result.duplicates).toBe(0);
+    expect(result.errors).toHaveLength(0);
+    // The waiver call is wired directly into ingestPurchases()'s insert
+    // loop -- no separate applyWaivers() call needed when the product is
+    // already correctly curated at ingest time.
     expect(await getOutstandingDebt(personId)).toBe(0);
   });
 
-  test("attendance after a term pass expires resumes counting as debt", async () => {
-    personId = await createPerson();
+  test("re-ingesting the same purchase row is idempotent and does not re-trigger or break the waiver", async () => {
+    const email = `ingest-test-${randomUUID()}@example.test`;
+    personId = await createPerson(email);
     await createAttendance(personId, "2026-01-01T18:00:00.000Z"); // free trial
-    await createAttendance(personId, "2026-04-01T18:00:00.000Z"); // well past a 70-day window from Jan 5
+    await createAttendance(personId, "2026-01-08T18:00:00.000Z"); // debt #1
 
     const { data: product, error: productError } = await admin
       .from("product")
-      .insert({ name: `Test Term Pass ${randomUUID()}`, kind: "term_pass", covers_days: 70 })
-      .select("id")
+      .insert({ name: `Test Annual Pass ${randomUUID()}`, kind: "annual_pass", covers_days: 365 })
+      .select("id, name")
       .single();
     if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
     productId = product.id;
 
-    const { error: purchaseError } = await admin.from("purchase").insert({
-      person_id: personId,
-      product_id: productId,
+    const row: RawPurchaseRow = {
+      externalId: `ingest-test-${randomUUID()}`,
+      personName: "Ingest Test Person",
+      personEmail: email,
+      memberType: "Public",
+      productName: product.name,
+      purchasedAt: new Date("2026-02-01T00:00:00.000Z"),
       source: "xlsx_upload",
-      source_row_id: `debt-test-${randomUUID()}`,
-      purchased_at: "2026-01-05T00:00:00.000Z",
-      match_status: "cid_matched",
-    });
-    if (purchaseError) throw new Error(`Failed to create test purchase: ${purchaseError.message}`);
+    };
 
-    expect(await getOutstandingDebt(personId)).toBe(1);
+    const first = await ingestPurchases([row]);
+    expect(first.inserted).toBe(1);
+    expect(await getOutstandingDebt(personId)).toBe(0);
+
+    const second = await ingestPurchases([row]);
+    expect(second.inserted).toBe(0);
+    expect(second.duplicates).toBe(1);
+    expect(second.errors).toHaveLength(0);
+    expect(await getOutstandingDebt(personId)).toBe(0); // unchanged, not re-waived incorrectly
   });
 });
