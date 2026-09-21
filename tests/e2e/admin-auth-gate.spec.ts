@@ -6,7 +6,7 @@ import { test, expect } from "@playwright/test";
 // requireAdmin()'s redirect behavior against a real running server for
 // every route that's supposed to be admin-only.
 test.describe("admin route gating", () => {
-  for (const path of ["/sessions/new", "/admin/purchases"]) {
+  for (const path of ["/sessions/new", "/admin/purchases", "/admin/chase-inbox"]) {
     test(`${path} redirects an unauthenticated visitor to /login`, async ({ page }) => {
       await page.goto(path);
       await expect(page).toHaveURL(/\/login/);
