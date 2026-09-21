@@ -164,17 +164,17 @@ behavior that depends on all of the above.
 
 ## Phase 5 — Debt Calculation
 
-- [ ] 5.1 Implement the debt query: unpaid sessions = attendance records with
+- [x] 5.1 Implement the debt query: unpaid sessions = attendance records with
       no covering purchase/waiver, excluding sessions covered by an active
       term/annual pass at the time attended — **Satisfies:** MP-1, DC-1
-- [ ] 5.2 Implement pass-expiry handling so attendance after a term/annual
+- [x] 5.2 Implement pass-expiry handling so attendance after a term/annual
       pass's coverage window resumes counting toward debt — **Satisfies:** MP-2
-  - [ ] Verify: attendance during a pass's coverage window doesn't count;
+  - [x] Verify: attendance during a pass's coverage window doesn't count;
         attendance after expiry does
-- [ ] 5.3 Implement waiver logic: when a covering pass/membership is
+- [x] 5.3 Implement waiver logic: when a covering pass/membership is
       purchased, set `waived_by_purchase_id` on the historical attendance rows
       it covers, without deleting them — **Satisfies:** MP-3
-  - [ ] Verify: a person with 3 unpaid attendance records who buys a covering
+  - [x] Verify: a person with 3 unpaid attendance records who buys a covering
         term pass has debt drop to 0, all 3 rows get a non-null
         `waived_by_purchase_id`, and none of them are deleted
 

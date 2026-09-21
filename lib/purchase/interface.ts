@@ -162,18 +162,22 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
 
   for (const purchase of purchases) {
     try {
-      const { error } = await admin.from('purchase').insert({
-        person_id: purchase.personId,
-        product_id: purchase.productId,
-        source: purchase.source,
-        source_row_id: purchase.sourceRowId,
-        raw_member_type: purchase.rawMemberType,
-        raw_person_name: purchase.rawPersonName,
-        raw_email: purchase.rawEmail,
-        raw_cid: purchase.rawCid,
-        match_status: purchase.matchStatus,
-        purchased_at: purchase.purchasedAt.toISOString(),
-      });
+      const { data: insertedPurchase, error } = await admin
+        .from('purchase')
+        .insert({
+          person_id: purchase.personId,
+          product_id: purchase.productId,
+          source: purchase.source,
+          source_row_id: purchase.sourceRowId,
+          raw_member_type: purchase.rawMemberType,
+          raw_person_name: purchase.rawPersonName,
+          raw_email: purchase.rawEmail,
+          raw_cid: purchase.rawCid,
+          match_status: purchase.matchStatus,
+          purchased_at: purchase.purchasedAt.toISOString(),
+        })
+        .select('id')
+        .single();
 
       if (error) {
         if (error.code === '23505') {
@@ -203,6 +207,20 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
             });
           }
         }
+
+        if (purchase.personId && insertedPurchase) {
+          try {
+            await applyWaivers(purchase.personId, insertedPurchase.id);
+          } catch (waiverError) {
+            errors.push({
+              rowId: purchase.sourceRowId,
+              reason: `Purchase inserted, but waiver assignment failed: ${
+                waiverError instanceof Error ? waiverError.message : 'unknown error'
+              }`,
+              rawRow: rows.find((r) => r.externalId === purchase.sourceRowId)!,
+            });
+          }
+        }
       }
     } catch (error) {
       // A transport-level throw for this one row shouldn't abort every
@@ -218,7 +236,23 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
   return { inserted, duplicates, errors };
 }
 
-export async function applyWaivers(_personId: string, _purchaseId: string): Promise<void> {
-  // (Phase 5 scope — not this task; stub for interface completeness)
-  throw new Error('Not implemented');
+// MP-3: waive as much of personId's currently-outstanding debt as this
+// purchase covers. See apply_purchase_waiver in
+// supabase/migrations/20260920130000_add_purchase_waiver_function.sql for
+// the exact per-product-kind rule. Returns the number of attendance rows
+// waived (0 if the product's kind doesn't waive anything yet, e.g. the
+// Phase-4 ingestion shortcut's auto-created 'other' products).
+export async function applyWaivers(personId: string, purchaseId: string): Promise<number> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc('apply_purchase_waiver', {
+    target_purchase_id: purchaseId,
+  });
+
+  if (error) {
+    throw new Error(
+      `Failed to apply waiver for purchase ${purchaseId} (person ${personId}): ${error.message}`
+    );
+  }
+
+  return data ?? 0;
 }
