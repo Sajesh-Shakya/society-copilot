@@ -184,22 +184,21 @@ behavior that depends on all of the above.
 
 ## Phase 6 — Chase Email Generator
 
-- [ ] 6.1 Scheduled job: for each person with debt continuously > 0 for more
-      than N days (config value — blocked on Open Question (a) in `design.md`),
+- [x] 6.1 Scheduled job: for each person with debt continuously > 0 for more
+      than N days (config value: 7 days, see design.md's Open Question (a) resolution; env var CHASE_THRESHOLD_DAYS),
       generate a draft `chase_email` row — **Satisfies:** DC-2
-- [ ] 6.2 Assign `sequence_number` per debt cycle; `sequence_number = 1` starts
+- [x] 6.2 Assign `sequence_number` per debt cycle; `sequence_number = 1` starts
       at `status = 'pending_approval'` — **Satisfies:** DC-3
-- [ ] 6.3 Implement the configurable auto-send policy for repeat reminders
+- [x] 6.3 Implement the configurable auto-send policy for repeat reminders
       (`sequence_number > 1`), logging every send to the audit trail — **Satisfies:** DC-4
-      (exact policy shape blocked on Open Question (b) in `design.md`)
-- [ ] 6.4 Exclude exempt persons (`is_exempt = true`) from chase-email
-      generation — **Satisfies:** DC-5 (exemption authority/audit rule blocked
-      on Open Question (c) in `design.md`)
-- [ ] 6.5 Stop generating further chase emails for a debt cycle once debt
+      (policy: env var CHASE_AUTO_SEND_REPEATS, see design.md)
+- [x] 6.4 Exclude exempt persons (`is_exempt = true`) from chase-email
+      generation — **Satisfies:** DC-5 (any admin, reason optional, see design.md)
+- [x] 6.5 Stop generating further chase emails for a debt cycle once debt
       reaches zero — **Satisfies:** DC-6
-  - [ ] Verify: a person with `is_exempt = true` and debt > 0 never gets a
+  - [x] Verify: a person with `is_exempt = true` and debt > 0 never gets a
         `chase_email` row
-  - [ ] Verify: `sequence_number = 1` always starts `pending_approval`;
+  - [x] Verify: `sequence_number = 1` always starts `pending_approval`;
         `sequence_number > 1` may start `approved` only when the auto-send
         policy is active for that cycle
 
