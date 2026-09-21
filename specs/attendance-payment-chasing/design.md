@@ -233,6 +233,25 @@ create table chase_email (
   record who did what and when for every state transition — a dedicated
   `audit_log` table would just duplicate that, contradicting DC-1's
   derive-don't-duplicate philosophy applied to auditability instead of debt.
+- **TRACKED GAP: cycle identity does not survive a partial payment, and a
+  `cancelled` row permanently ends chasing for its cycle.** Found during
+  this session's final whole-branch review of the chase-email generator.
+  `active_debt_cycle` derives a cycle's identity from `min(starts_at)` over
+  currently-outstanding sessions — correct for "debt cleared entirely, then
+  recurred" (a genuinely new cycle), but a `session_pass`'s FIFO partial
+  waiver also advances this minimum while debt is still non-zero, which the
+  generator cannot distinguish from a real new cycle. This can orphan an
+  in-flight chase email (nothing ever supersedes it) and, separately, a
+  `cancelled` terminal status (from a future Phase 7 rejection, or this
+  round's exemption/debt-cleared auto-cancels reversing) permanently blocks
+  further chasing for that exact cycle key, since only `status = 'sent'`
+  advances the sequence. Neither is fixed in this round: the correct fix
+  requires deciding what "the same cycle" means when debt is partially
+  paid (a persisted cycle anchor? re-deriving from the *oldest unwaived*
+  session pre-partial-payment?) and what `cancelled` should mean for future
+  chasing (treat it like `sent` for cadence purposes? reset the whole
+  cycle?) — genuine design decisions, not implementation gaps, and too
+  large to bundle into this fix round. Revisit before or during Phase 7.
 
 ### a. Chase-email timing threshold — RESOLVED (2026-09-21)
 

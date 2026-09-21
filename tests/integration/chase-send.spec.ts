@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendChaseEmail, processAutoSends } from "@/lib/chase/send";
 
 const admin = createAdminClient();
+let sessionIds: string[] = [];
 
 async function createPerson() {
   const email = `chase-send-test-${crypto.randomUUID()}@example.test`;
@@ -26,6 +27,7 @@ async function createAttendance(personId: string, startsAt: Date) {
     .from("attendance_record")
     .insert({ person_id: personId, session_id: session.id, source: "manual_tick" });
   if (attendanceError) throw attendanceError;
+  sessionIds.push(session.id);
   return session.id as string;
 }
 
@@ -58,6 +60,11 @@ test.describe("sendChaseEmail", () => {
       .delete()
       .eq("person_id", personId);
     if (attendanceError) throw attendanceError;
+    if (sessionIds.length > 0) {
+      const { error: sessionError } = await admin.from("session").delete().in("id", sessionIds);
+      if (sessionError) throw sessionError;
+      sessionIds = [];
+    }
     const { error: personError } = await admin.from("person").delete().eq("id", personId);
     if (personError) throw personError;
     personId = "";
@@ -103,29 +110,61 @@ test.describe("sendChaseEmail", () => {
   });
 
   test("processAutoSends only touches sequence_number > 1 approved rows", async () => {
-    personId = await createPerson();
-    await createAttendance(personId, new Date(Date.now() - 20 * 24 * 60 * 60 * 1000));
-    await createAttendance(personId, new Date(Date.now() - 10 * 24 * 60 * 60 * 1000));
-    const firstId = await createApprovedChaseEmail(personId, 1);
-    const repeatId = await createApprovedChaseEmail(personId, 2);
+    const originalFlag = process.env.CHASE_AUTO_SEND_REPEATS;
+    process.env.CHASE_AUTO_SEND_REPEATS = "true";
+    try {
+      personId = await createPerson();
+      await createAttendance(personId, new Date(Date.now() - 20 * 24 * 60 * 60 * 1000));
+      await createAttendance(personId, new Date(Date.now() - 10 * 24 * 60 * 60 * 1000));
+      const firstId = await createApprovedChaseEmail(personId, 1);
+      const repeatId = await createApprovedChaseEmail(personId, 2);
 
-    const result = await processAutoSends();
-    expect(result.sent).toBeGreaterThanOrEqual(1);
+      const result = await processAutoSends();
+      expect(result.sent).toBeGreaterThanOrEqual(1);
 
-    const { data: first, error: firstError } = await admin
-      .from("chase_email")
-      .select("status")
-      .eq("id", firstId)
-      .single();
-    if (firstError) throw firstError;
-    expect(first.status).toBe("approved"); // untouched -- sequence 1 is never auto-sent
+      const { data: first, error: firstError } = await admin
+        .from("chase_email")
+        .select("status")
+        .eq("id", firstId)
+        .single();
+      if (firstError) throw firstError;
+      expect(first.status).toBe("approved"); // untouched -- sequence 1 is never auto-sent
 
-    const { data: repeat, error: repeatError } = await admin
-      .from("chase_email")
-      .select("status")
-      .eq("id", repeatId)
-      .single();
-    if (repeatError) throw repeatError;
-    expect(repeat.status).toBe("sent");
+      const { data: repeat, error: repeatError } = await admin
+        .from("chase_email")
+        .select("status")
+        .eq("id", repeatId)
+        .single();
+      if (repeatError) throw repeatError;
+      expect(repeat.status).toBe("sent");
+    } finally {
+      if (originalFlag === undefined) delete process.env.CHASE_AUTO_SEND_REPEATS;
+      else process.env.CHASE_AUTO_SEND_REPEATS = originalFlag;
+    }
+  });
+
+  test("processAutoSends does nothing when CHASE_AUTO_SEND_REPEATS is not set", async () => {
+    const originalFlag = process.env.CHASE_AUTO_SEND_REPEATS;
+    delete process.env.CHASE_AUTO_SEND_REPEATS;
+    try {
+      personId = await createPerson();
+      await createAttendance(personId, new Date(Date.now() - 20 * 24 * 60 * 60 * 1000));
+      await createAttendance(personId, new Date(Date.now() - 10 * 24 * 60 * 60 * 1000));
+      const repeatId = await createApprovedChaseEmail(personId, 2);
+
+      const result = await processAutoSends();
+      expect(result).toEqual({ sent: 0, cancelled: 0 });
+
+      const { data: repeat, error } = await admin
+        .from("chase_email")
+        .select("status")
+        .eq("id", repeatId)
+        .single();
+      if (error) throw error;
+      expect(repeat.status).toBe("approved"); // untouched
+    } finally {
+      if (originalFlag === undefined) delete process.env.CHASE_AUTO_SEND_REPEATS;
+      else process.env.CHASE_AUTO_SEND_REPEATS = originalFlag;
+    }
   });
 });

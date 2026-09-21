@@ -2,8 +2,15 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { listActiveDebtCycles } from "@/lib/chase/debt-cycles";
 import { buildChaseEmailContent } from "@/lib/chase/template";
 
-const CHASE_THRESHOLD_DAYS = Number(process.env.CHASE_THRESHOLD_DAYS ?? 7);
-const AUTO_SEND_REPEATS = process.env.CHASE_AUTO_SEND_REPEATS === "true";
+const parsedThreshold = Number(process.env.CHASE_THRESHOLD_DAYS);
+const CHASE_THRESHOLD_DAYS = Number.isFinite(parsedThreshold) && parsedThreshold > 0
+  ? parsedThreshold
+  : 7;
+if (process.env.CHASE_THRESHOLD_DAYS !== undefined && CHASE_THRESHOLD_DAYS === 7 && process.env.CHASE_THRESHOLD_DAYS !== "7") {
+  console.warn(
+    `CHASE_THRESHOLD_DAYS="${process.env.CHASE_THRESHOLD_DAYS}" is not a valid positive number -- falling back to 7.`
+  );
+}
 
 function daysBetween(earlier: Date, later: Date): number {
   return (later.getTime() - earlier.getTime()) / (1000 * 60 * 60 * 24);
@@ -39,10 +46,10 @@ export async function generateChaseEmails(): Promise<{ created: number }> {
 
     if (!last) {
       shouldGenerate =
-        daysBetween(new Date(cycle.debtCycleStartedAt), now) >= CHASE_THRESHOLD_DAYS;
+        daysBetween(new Date(cycle.debtCycleStartedAt), now) > CHASE_THRESHOLD_DAYS;
     } else if (last.status === "sent" && last.sent_at) {
       nextSequence = last.sequence_number + 1;
-      shouldGenerate = daysBetween(new Date(last.sent_at), now) >= CHASE_THRESHOLD_DAYS;
+      shouldGenerate = daysBetween(new Date(last.sent_at), now) > CHASE_THRESHOLD_DAYS;
     }
     // else: a draft/pending_approval/approved row already exists for this
     // cycle and hasn't been sent yet -- don't pile up another one on top of
@@ -55,8 +62,8 @@ export async function generateChaseEmails(): Promise<{ created: number }> {
       fullName: cycle.fullName,
       debtCount: cycle.debtCount,
     });
-    const status =
-      nextSequence === 1 ? "pending_approval" : AUTO_SEND_REPEATS ? "approved" : "pending_approval";
+    const autoApproved = nextSequence > 1 && process.env.CHASE_AUTO_SEND_REPEATS === "true";
+    const status = nextSequence === 1 ? "pending_approval" : autoApproved ? "approved" : "pending_approval";
 
     const { error: insertError } = await admin.from("chase_email").insert({
       person_id: cycle.personId,
@@ -65,6 +72,8 @@ export async function generateChaseEmails(): Promise<{ created: number }> {
       status,
       subject,
       body,
+      approved_by: autoApproved ? "system:CHASE_AUTO_SEND_REPEATS" : null,
+      approved_at: autoApproved ? new Date().toISOString() : null,
     });
 
     if (insertError) {
@@ -72,7 +81,12 @@ export async function generateChaseEmails(): Promise<{ created: number }> {
       // disappeared between listActiveDebtCycles() and this insert -- e.g.
       // deleted, waived, or exempted concurrently. Skip rather than fail
       // the whole run over one stale cycle.
-      if (insertError.code === "23503") continue;
+      if (insertError.code === "23503") {
+        console.warn(
+          `Skipped chase_email for person ${cycle.personId}: their debt cycle disappeared (FK violation) between listing and insert.`
+        );
+        continue;
+      }
       throw new Error(
         `Failed to create chase_email for person ${cycle.personId}: ${insertError.message}`
       );

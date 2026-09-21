@@ -26,6 +26,30 @@ export async function sendChaseEmail(
     );
   }
 
+  const { data: person, error: personError } = await admin
+    .from("person")
+    .select("is_exempt")
+    .eq("id", row.person_id)
+    .single();
+  if (personError) {
+    throw new Error(`Failed to fetch person ${row.person_id}: ${personError.message}`);
+  }
+
+  if (person.is_exempt) {
+    const { error: cancelError } = await admin
+      .from("chase_email")
+      .update({
+        status: "cancelled",
+        note: "Auto-cancelled: person was exempted before send.",
+      })
+      .eq("id", chaseEmailId)
+      .eq("status", "approved");
+    if (cancelError) {
+      throw new Error(`Failed to cancel chase_email ${chaseEmailId}: ${cancelError.message}`);
+    }
+    return { sent: false, reason: "exempt" };
+  }
+
   const debt = await getOutstandingDebt(row.person_id);
 
   if (debt <= 0) {
@@ -60,6 +84,10 @@ export async function sendChaseEmail(
 // touches sequence_number = 1 rows -- those always require manual approval
 // (DC-3) and reach `approved` only through a future Phase 7 admin action.
 export async function processAutoSends(): Promise<{ sent: number; cancelled: number }> {
+  if (process.env.CHASE_AUTO_SEND_REPEATS !== "true") {
+    return { sent: 0, cancelled: 0 };
+  }
+
   const admin = createAdminClient();
   const { data: rows, error } = await admin
     .from("chase_email")
