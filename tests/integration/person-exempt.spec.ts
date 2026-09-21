@@ -1,6 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { setPersonExempt } from "@/lib/person/actions";
+import { applyPersonExempt } from "@/lib/person/actions";
+
+const TEST_ADMIN_EMAIL = "test-admin@example.test";
 
 const admin = createAdminClient();
 
@@ -27,7 +29,7 @@ test.describe("setPersonExempt", () => {
 
   test("setting exempt=true with a reason records set_by/set_at/reason", async () => {
     personId = await createPerson();
-    await setPersonExempt({ personId, exempt: true, reason: "Committee member" });
+    await applyPersonExempt({ personId, exempt: true, reason: "Committee member" }, TEST_ADMIN_EMAIL);
 
     const { data: row, error } = await admin
       .from("person")
@@ -37,14 +39,14 @@ test.describe("setPersonExempt", () => {
     if (error) throw error;
 
     expect(row.is_exempt).toBe(true);
-    expect(row.exempt_set_by).not.toBeNull();
+    expect(row.exempt_set_by).toBe(TEST_ADMIN_EMAIL);
     expect(row.exempt_set_at).not.toBeNull();
     expect(row.exempt_reason).toBe("Committee member");
   });
 
   test("setting exempt=true without a reason leaves exempt_reason null", async () => {
     personId = await createPerson();
-    await setPersonExempt({ personId, exempt: true });
+    await applyPersonExempt({ personId, exempt: true }, TEST_ADMIN_EMAIL);
 
     const { data: row, error } = await admin
       .from("person")
@@ -59,8 +61,8 @@ test.describe("setPersonExempt", () => {
 
   test("clearing exempt=false resets set_by/set_at/reason to null", async () => {
     personId = await createPerson();
-    await setPersonExempt({ personId, exempt: true, reason: "temp" });
-    await setPersonExempt({ personId, exempt: false });
+    await applyPersonExempt({ personId, exempt: true, reason: "temp" }, TEST_ADMIN_EMAIL);
+    await applyPersonExempt({ personId, exempt: false }, TEST_ADMIN_EMAIL);
 
     const { data: row, error } = await admin
       .from("person")
