@@ -31,8 +31,10 @@ create table person (
 create table session (
   id uuid primary key default gen_random_uuid(),
   eactivities_event_id text unique,
+  eactivities_signup_id text unique,         -- AC-8: admin-picked, not auto-detected
   title text not null,
   starts_at timestamptz not null,
+  last_synced_at timestamptz,                -- drives AC-6 debounce, AC-7 window check
   created_at timestamptz not null default now()
 );
 
@@ -53,6 +55,7 @@ create table product (
   name text not null,                        -- e.g. "Term 1 Pass", "Annual Membership", "Single Session"
   kind text not null check (kind in ('session_pass','term_pass','annual_pass','other')),
   covers_sessions int,                        -- null = unlimited (term/annual)
+  covers_days int,                            -- resolved 2026-09-20: for term_pass/annual_pass, coverage window length in days from purchased_at. Null for session_pass/other.
   created_at timestamptz not null default now()
 );
 
@@ -122,6 +125,26 @@ create table chase_email (
   connection is simply a missed live update, recoverable via the manual
   sync/refresh already required by AC-6.
 
+- **Scheduling: Supabase `pg_cron` + Edge Functions for the per-session sync
+  trigger, not Vercel Cron.** Vercel Hobby cron is capped at once/day, with
+  timing only guaranteed within the scheduled hour — adequate for a daily
+  Pluto poll or the weekly chase-email run, but not for AC-7 ("sync ~1 hour
+  before each session's start time"), which is sub-daily and depends on each
+  session's own `starts_at`. Driving that trigger from `pg_cron` + a Supabase
+  Edge Function decouples it entirely from Vercel's plan limits — the daily
+  Pluto poll and weekly chase run may still use Vercel Cron, but the
+  session-specific sync must not.
+
+- **eActivities auth failures and rate limits never trigger an automatic
+  retry, anywhere.** A bad/missing `EACTIVITIES_API_KEY` returns 401; repeated
+  auth failures ban the requesting IP for 1 hour, and excessive request
+  volume (regardless of auth) bans it for 5 minutes — both IP-wide, so a
+  naive retry loop risks taking the whole app offline, not just one sync.
+  Instead: the manual "sync now" action is debounced (60s, tracked via
+  `session.last_synced_at`) so it can't be spammed into a ban, and the
+  scheduled sync's own cron interval provides backoff for free — a failed
+  attempt just waits for the next tick rather than retrying in-process.
+
 ## Open Questions — Needs Human Decision
 
 These are unresolved. No default is assumed anywhere in this spec or its
@@ -154,9 +177,15 @@ to that action (must a reason be logged, can only certain admin roles set it)?
 
 *Context carried over from the draft, not adopted as a decision:* the draft
 author suggested any admin can set it, with an optional (not mandatory) reason.
-The draft also flagged a related product question that should be settled
+The draft
+also flagged a related product question that should be settled
 alongside this one: Judo and BJJ's first session is always free, so a naive
 debt count would generate a chase email for someone who only ever attended a
-free trial session. Some mechanism (e.g. not counting session 1 toward debt, or
-an explicit "free trial" flag) is needed before this ships, and is not yet
-designed.
+free trial session.
+
+**RESOLVED (2026-09-20):** the debt query (`outstanding_attendance`, see
+`docs/superpowers/plans/2026-09-20-debt-calculation.md`) auto-excludes each
+person's chronologically-earliest `attendance_record` (by `session.starts_at`)
+from debt calculation — no schema flag, no admin action needed. The
+exemption-authority question above (who may set `is_exempt`, and whether a
+reason must be logged) remains open.
