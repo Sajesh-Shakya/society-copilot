@@ -13,7 +13,18 @@ dotenv.config({ path: path.resolve(__dirname, '.env.local') });
  */
 export default defineConfig({
   testDir: './tests/integration',
-  fullyParallel: true,
+  fullyParallel: false,
+  // Single worker: generateChaseEmails() (chase-generator.spec.ts) scans
+  // and mutates chase_email for every active debt cycle across the whole
+  // live dev project, not just rows scoped to its own test data. Run
+  // concurrently with any other integration file that creates a
+  // temporarily debt-eligible person (e.g. debt-calculation.spec.ts,
+  // purchase-waivers.spec.ts), it can insert a chase_email row against
+  // that file's person moments before that file's own afterEach deletes
+  // the person -- either racing a duplicate chase_email insert or making
+  // that delete fail on the chase_email FK. Forcing one worker serializes
+  // all integration tests so no two ever run at the same time.
+  workers: 1,
   forbidOnly: !!process.env.CI,
   // Unconditionally 0, not gated on CI: these tests mutate real project
   // data, so a flaky run should surface as a failure, not silently
