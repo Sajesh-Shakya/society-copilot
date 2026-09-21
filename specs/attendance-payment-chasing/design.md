@@ -177,51 +177,94 @@ create table chase_email (
   debt at all, matching what the attendance-screen's attended/not-attended
   toggle is for.
 
-## Open Questions — Needs Human Decision
+- **Admin identity is an email string, not a `person.id` or generic `uuid`.**
+  `chase_email.approved_by` and `person.exempt_set_by` were originally typed
+  `uuid` from Phase 1, before admin auth existed. The actual admin-auth model
+  built this session (`lib/auth/require-admin.ts`) identifies an admin by
+  their Supabase Auth email checked against `admin_allowlist` — there is no
+  "admin person" row anywhere in the schema. Both columns were corrected to
+  `text` in `supabase/migrations/20260921100000_add_chase_email_content_and_fix_admin_identity_columns.sql`,
+  before either was ever populated by real code.
 
-These were unresolved as of this section's original writing.
-`requirements.md` keeps the debt-age threshold as "N days (configurable)"
-(DC-2) and the schema keeps `is_exempt`/audit fields unopinionated about
-who may set them, pending the decisions below. (c)'s free-trial sub-issue
-has since been resolved — see the RESOLVED note below and Architecture
-Decisions above. (a), (b), and (c)'s main exemption-authority question
-remain open.
+- **A debt cycle is derived, not stored, the same way debt itself is (DC-1).**
+  A person's active debt cycle is identified by the oldest `starts_at` among
+  their currently-outstanding rows in `outstanding_attendance` (exposed via
+  the `active_debt_cycle` view). This needs no separate cycle-tracking state
+  and satisfies DC-6 for free: once every outstanding row for a person is
+  waived, that person has zero rows in `outstanding_attendance` and
+  disappears from `active_debt_cycle` entirely, so generation simply stops.
+  If they later go into debt again, `min(starts_at)` naturally advances to
+  the new oldest unpaid session, which is a new cycle by construction.
 
-### a. Chase-email timing threshold
-How many days of unpaid debt should elapse before the first chase email drafts
-(the `N` in "debt greater than zero for more than N days")?
+- **Chase-email cadence reuses the DC-2 threshold (N = 7 days) for repeats,
+  and only fires the next reminder after the previous one was actually
+  sent.** The first draft in a cycle fires N days after the cycle's oldest
+  unpaid session. Each subsequent draft fires N days after the *previous*
+  chase_email in that cycle reached `status = 'sent'` — not merely
+  `approved` or `pending_approval`. This prevents drafts from piling up
+  while an earlier one sits un-actioned, and avoids needing a second
+  admin-configurable interval that nothing in the requirements asked for.
 
-*Context carried over from the draft, not adopted as a decision:* the draft
-author's working note suggested 2 days. Recorded here for the deciding admin's
-reference only — not treated as the answer.
+- **Repeat auto-send policy is a single boolean env var,
+  `CHASE_AUTO_SEND_REPEATS`.** When unset/false (the default), every chase
+  email — first or repeat — requires manual approval, same as DC-3 mandates
+  for the first. When true, `sequence_number > 1` drafts are created
+  pre-approved (`status = 'approved'`) and are picked up by the same
+  scheduled job's auto-send pass. `sequence_number = 1` is never affected by
+  this flag (DC-3 is unconditional).
 
-### b. First-chase approval policy
-Does the first chase email in a debt cycle always require explicit admin
-approval, or can a configurable auto-send policy apply even to the first email,
-for certain trusted scenarios?
+- **Pre-send debt recheck (session addition, not in the original tasks.md
+  text).** Immediately before `sendChaseEmail` marks a row `sent`, it
+  re-fetches the person's live outstanding debt. If debt is already 0 (the
+  person paid between drafting/approval and send), the row is marked
+  `cancelled` with `note = 'Auto-cancelled: debt was already cleared before
+  send.'` instead of `sent`, and no message goes out. Requested explicitly
+  because a chase email can sit `pending_approval`/`approved` for days,
+  during which the underlying debt (DC-1, always live) can change.
 
-*Context carried over from the draft, not adopted as a decision:* the draft
-author suggested the first email could auto-send if the email itself gives the
-recipient a way to flag "I never attended" or "I already paid for some/all of
-these sessions" — i.e. approval-by-exception instead of approval-by-default.
-That's a real design option to weigh, not a decision.
+- **No real message dispatch.** `sendChaseEmail` only updates `chase_email`'s
+  own `status`/`sent_at`/`note` — matching the project's existing approval-
+  simulation model (`AGENTS.md`: "no real message sending unless explicitly
+  built and approved"). `GMAIL_USER`/`GMAIL_APP_PASSWORD` already sit unused
+  in `.env.local`; wiring them up is a distinct, not-yet-requested task.
 
-### c. Exemption authority & audit requirement
-Who is allowed to mark a person `is_exempt`, and what audit requirement applies
-to that action (must a reason be logged, can only certain admin roles set it)?
+- **No separate audit-log table for chase emails.** `chase_email`'s own
+  `status`/`approved_by`/`approved_at`/`sent_at`/`note` columns already
+  record who did what and when for every state transition — a dedicated
+  `audit_log` table would just duplicate that, contradicting DC-1's
+  derive-don't-duplicate philosophy applied to auditability instead of debt.
 
-*Context carried over from the draft, not adopted as a decision:* the draft
-author suggested any admin can set it, with an optional (not mandatory) reason.
-The draft
-also flagged a related product question that should be settled
-alongside this one: Judo and BJJ's first session is always free, so a naive
-debt count would generate a chase email for someone who only ever attended a
-free trial session.
+### a. Chase-email timing threshold — RESOLVED (2026-09-21)
 
-**RESOLVED (2026-09-20):** the debt query (`outstanding_attendance`, see
-`supabase/migrations/20260920120000_add_debt_calculation_functions.sql`
-and the Architecture Decisions section above) auto-excludes each person's
-chronologically-earliest ATTENDED `attendance_record` (by
-`session.starts_at`) from debt calculation — no schema flag, no admin
-action needed. The exemption-authority question above (who may set
-`is_exempt`, and whether a reason must be logged) remains open.
+N = 7 days. A draft chase email generates once a person's debt has been
+continuously greater than zero for more than 7 days. The same 7-day period
+is reused as the repeat-reminder cadence (see the "Chase-email cadence"
+architecture decision below) rather than introducing a second configurable
+interval nothing requested.
+
+### b. First-chase approval policy — RESOLVED (2026-09-21)
+
+The first chase email in a debt cycle always requires explicit admin
+approval, with no auto-send exception. This is not a new decision so much
+as a recognition that `requirements.md`'s DC-3 already states this
+unconditionally ("SHALL require explicit admin approval before sending") —
+the draft author's "approval-by-exception" idea for the first email was
+never adopted into DC-3, and implementing it would have meant quietly
+weakening a hard requirement. `sequence_number = 1` chase emails always
+start at `status = 'pending_approval'`.
+
+### c. Exemption authority & audit requirement — RESOLVED (2026-09-21)
+
+Any admin can set or clear `person.is_exempt`. A reason
+(`person.exempt_reason`) is optional, not mandatory. `exempt_set_by` records
+the acting admin's email (from `admin_allowlist`, via `requireAdmin()`) and
+`exempt_set_at` the timestamp; both are cleared (`null`) when exemption is
+lifted, matching the "no longer applies" data model already used elsewhere
+in this schema.
+
+**RESOLVED (2026-09-20), free-trial sub-issue:** the debt query
+(`outstanding_attendance`, see
+`supabase/migrations/20260920120000_add_debt_calculation_functions.sql`)
+auto-excludes each person's chronologically-earliest ATTENDED
+`attendance_record` (by `session.starts_at`) from debt calculation — no
+schema flag, no admin action needed.
