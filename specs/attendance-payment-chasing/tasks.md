@@ -204,12 +204,15 @@ behavior that depends on all of the above.
 
 ## Phase 7 — Approval Inbox
 
-- [ ] 7.1 Build the approval inbox listing `chase_email` rows with `status =
-      'pending_approval'` — **Satisfies:** DC-3
-- [ ] 7.2 Implement the approve action: set `status = 'approved'`,
+- [x] 7.1 Build the approval inbox listing `chase_email` rows with `status =
+      'pending_approval'` — **Satisfies:** DC-3 (lists `pending_approval` +
+      `approved`-but-unsent, a documented superset so the same page can
+      also trigger sends)
+- [x] 7.2 Implement the approve action: set `status = 'approved'`,
       `approved_by`, `approved_at` — **Satisfies:** DC-3
-- [ ] 7.3 Implement the send action (manual, or triggered by the auto-send
+- [x] 7.3 Implement the send action (manual, or triggered by the auto-send
       policy): set `status = 'sent'`, `sent_at`, and write an audit log entry — **Satisfies:** DC-4
-- [ ] 7.4 Implement the reject/cancel action: set `status = 'cancelled'` and
+- [x] 7.4 Implement the reject/cancel action: set `status = 'cancelled'` and
       preserve reviewer feedback, per `core/RULES.md` §10 ("every rejected
-      draft should preserve reviewer feedback")
+      draft should preserve reviewer feedback") — note is attributed
+      (`<actor email> @ <ISO timestamp>: <feedback>`) rather than raw text
