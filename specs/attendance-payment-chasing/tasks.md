@@ -225,3 +225,20 @@ behavior that depends on all of the above.
       preserve reviewer feedback, per `core/RULES.md` §10 ("every rejected
       draft should preserve reviewer feedback") — note is attributed
       (`<actor email> @ <ISO timestamp>: <feedback>`) rather than raw text
+
+## Backlog — not yet scheduled
+
+- [ ] Admin login: Microsoft/Azure AD OAuth via Supabase Auth. Deferred
+      2026-09-22 in favor of email/password (signInWithPassword,
+      manually-provisioned accounts) after magic-link and OTP-code sign-in
+      both turned out to depend on Imperial's mail deliverability (Microsoft
+      Safe Links pre-fetching consumed magic-link tokens before the user
+      could click them; the subsequent OTP-code emails then got stuck
+      somewhere between Gmail SMTP and Imperial's spam filtering — never
+      conclusively resolved). All admins already have Imperial Microsoft
+      accounts, so Azure AD OAuth would remove password management
+      entirely and sidesteps outbound email altogether. Come back to this
+      once there's time to register an Azure AD app (needs Imperial ICT
+      involvement if SMTP-adjacent tenant policies are similarly locked
+      down — untested whether OAuth app registration has the same
+      friction). Not abandoned — logged here deliberately.

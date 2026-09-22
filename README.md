@@ -20,6 +20,42 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Admin accounts
+
+Sign-in is email/password via Supabase Auth (`signInWithPassword`). There is
+no self-service signup and no automated password-reset-by-email — both are
+deliberate, to avoid depending on Imperial's mail deliverability (see
+`specs/attendance-payment-chasing/tasks.md`, Backlog). Admin access is
+additionally gated by the `admin_allowlist` table — having a Supabase Auth
+account alone isn't enough; the account's email must also be on that list.
+
+**Creating a new admin account:**
+
+```bash
+node scripts/create-admin.ts someone@ic.ac.uk
+```
+
+Requires `SUPABASE_SECRET_KEY` and `NEXT_PUBLIC_SUPABASE_URL` in `.env.local`.
+This creates the Supabase Auth user (pre-confirmed, no confirmation email)
+and adds the email to `admin_allowlist`. It prints a randomly generated
+password once — share it out-of-band (in person, group chat), **never by
+email**. If you need to re-run this for an email that already has an
+account, it will fail; use the dashboard instead (see below).
+
+**Resetting a forgotten password / re-provisioning an existing account:**
+
+There is no in-app flow for this — do it manually via the Supabase
+dashboard: **Authentication → Users**, find the account, use the "..." menu
+to reset the password, then share the new password with that admin
+out-of-band.
+
+**Removing admin access:**
+
+Delete the row from `admin_allowlist` (via the dashboard's SQL editor or
+Table Editor). This takes effect immediately, on their very next request —
+`requireAdmin()` re-checks the allowlist on every call, not just at login —
+without needing to also delete or disable their Supabase Auth account.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
