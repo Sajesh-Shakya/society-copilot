@@ -37,27 +37,58 @@ Responsibilities:
 Current eActivities documentation provides practical read access to committee, membership, online sales, products, signups, transaction lines, profile entries, and What’s On events. That is enough for payment chasing, signup reconciliation, finance reminders, and event data hydration.
 
 ### Internal interface
+
+**Update (Attendance Tracking & Payment Chasing):** the real API has no
+endpoint that lists "the signups for a society" — signups are nested under
+specific What's On events, and an event may have several signup forms for
+unrelated purposes (e.g. a dietary-requirements form) with no flag
+identifying which one, if any, represents attendance. `getSignups` below is
+replaced with `getEvent` (event + its attached signups, for an admin to pick
+from) and `getSignup` (one signup's attendee roster). `getProducts` /
+`getProductSales` are removed — those endpoints are deprecated; all
+purchase/sale data now comes from Pluto or an XLSX upload (see "Purchase-
+ingestion adapter" below), not eActivities.
+
 ```ts
 interface SocietyDataProvider {
   getCommitteeMembers(societyId: string, year?: string): Promise<CommitteeMember[]>
   getMembers(societyId: string, year?: string): Promise<Member[]>
-  getProducts(societyId: string, year?: string): Promise<Product[]>
-  getProductSales(societyId: string, productId: string): Promise<ProductSale[]>
-  getSignups(societyId: string): Promise<Signup[]>
   getTransactionLines(societyId: string, year?: string): Promise<TransactionLine[]>
   getEvents(societyId: string): Promise<Event[]>
+  getEvent(societyId: string, eventId: string): Promise<EventDetail>   // event + attached signups
+  getSignup(societyId: string, signupId: string): Promise<SignupDetail> // one signup's attendee roster
 }
 ```
 
+### Real API reference (signups/attendance surface)
+
+- Base URL: `https://eactivities.union.ic.ac.uk/API`
+- Auth: API key via `X-API-Key` header (Basic Auth with the key as password
+  also works; this codebase uses the header). JSON by default.
+- Env vars: `EACTIVITIES_API_KEY`, `EACTIVITIES_CSP_CODE` (our centre code).
+- `GET /csp/{centre}/whatson` → `Event[]` (`ID`, `Title`, `Description`,
+  `EventStart`, `EventEnd`, `Location`, `PostCode`, `EventType`, `Active`).
+- `GET /csp/{centre}/whatson/{id}` → `EventDetail` — same fields, plus
+  `Signups: SignupSummary[]` (`ID`, `Title`, `Description`, `SignupOpen`,
+  `SignupClose`, `AttendeesCount`, `MaximumAttendees`).
+- `GET /csp/{centre}/signups/{id}` → `SignupDetail` — adds
+  `Attendees: Attendee[]` (`FirstName`, `Surname`, `CID`, `Email`, `Login`).
+  `CID` is Imperial's 8-digit student ID; `Login` is the shortcode.
+- **401** (missing/invalid key) and **403** (rate-limited or IP-banned) both
+  return `{ "message": "..." }`. Repeated auth failures ban the IP for 1
+  hour; excessive request volume bans it for 5 minutes, regardless of auth.
+  Never retry automatically on either — see `design.md`'s Architecture
+  Decisions for the debounce/backoff approach this codebase uses instead.
+
 ### MVP use cases
 - identify members with missing sales or signups
-- build event context from products / signups / What’s On events
+- build event context from What’s On events and their attached signups
 - create finance/admin reminders from transaction line patterns
 - load current committee contacts for approvals and correspondence
 
 ### Limitations
 - treat it as low-volume and read-oriented
-- avoid aggressive polling
+- avoid aggressive polling; no automatic retries on 401/403 (IP-wide bans)
 - assume write operations are unavailable or out of scope unless proven otherwise
 
 ## Pluto adapter

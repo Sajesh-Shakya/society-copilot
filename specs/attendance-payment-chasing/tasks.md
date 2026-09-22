@@ -66,12 +66,14 @@ behavior that depends on all of the above.
       review — without it, the route is reachable directly with no UI,
       letting a caller enumerate `sessionId`s to bypass the per-session
       debounce entirely) until real admin auth exists — **Satisfies:** AC-6
-  - [ ] Verify: re-running sync against an unchanged sign-up list produces zero
-        new/changed attendance rows
-  - [ ] Verify: a second sync attempt inside the debounce window is rejected
-        without calling eActivities
-  - [ ] Verify: a request without a valid `SYNC_TRIGGER_SECRET` gets 401 and
-        never reaches `syncSessionAttendance`
+  - [x] Verify: re-running sync against an unchanged sign-up list produces zero
+        new/changed attendance rows (`tests/integration/attendance-sync.spec.ts`)
+  - [x] Verify: a second sync attempt inside the debounce window is rejected
+        without calling eActivities (`tests/integration/attendance-sync.spec.ts`,
+        asserted via a call counter on the injected fake provider)
+  - [x] Verify: a request without a valid `SYNC_TRIGGER_SECRET` gets 401 and
+        never reaches `syncSessionAttendance` (`tests/integration/attendance-sync.spec.ts`,
+        covers both a wrong bearer token and no secret configured at all)
 - [x] 2.3 Implement the scheduled trigger that syncs each session
       automatically ~1 hour before its `starts_at`, via Supabase `pg_cron` +
       an Edge Function dispatcher calling a `CRON_SECRET`-protected route
@@ -100,9 +102,16 @@ behavior that depends on all of the above.
       togglable attended/not-attended — **Satisfies:** AC-1
 - [x] 3.2 Wire the toggle to an idempotent upsert (`INSERT ... ON CONFLICT DO
       NOTHING`) against `UNIQUE(person_id, session_id)` — **Satisfies:** AC-2
-  - [ ] Verify: double-ticking the same person for the same session produces
-        exactly one `attendance_record` row
-  - [ ] Verify: unticking removes exactly the row for that person/session pair
+  - [x] Verify: double-ticking the same person for the same session produces
+        exactly one `attendance_record` row (`tests/integration/attendance-toggle.spec.ts`)
+  - [x] Verify: unticking updates that same row's `attended` to `false` rather
+        than deleting or duplicating it — the actual implementation is `ON
+        CONFLICT DO UPDATE` (not `DO NOTHING`, see the comment in
+        `toggleAttendance`), deliberately: an admin's explicit untick should
+        overwrite, and the row must survive so the roster still shows the
+        person as present-but-not-attended rather than disappearing. Original
+        wording above ("removes... the row") predates that decision.
+        (`tests/integration/attendance-toggle.spec.ts`)
 - [x] 3.3 Subscribe the attendance screen to Supabase Realtime changes on
       `attendance_record` scoped to the current `session_id`; reflect remote
       toggles within 2 seconds — **Satisfies:** AC-3
