@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { requireAdmin, UnauthorizedError } from '@/lib/auth/require-admin';
 import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -22,7 +23,10 @@ export default async function AdminPurchasesPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Purchase Management</h1>
+      <Link href="/sessions" className="text-sm text-muted-foreground underline">
+        ← All sessions
+      </Link>
+      <h1 className="mt-4 text-2xl font-semibold tracking-tight">Purchase Management</h1>
 
       <div className="mt-8 rounded-lg border p-4">
         <h2 className="font-semibold">Upload XLSX</h2>

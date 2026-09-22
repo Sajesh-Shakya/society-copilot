@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireAdmin, UnauthorizedError } from "@/lib/auth/require-admin";
 import { redirect } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -29,7 +30,10 @@ export default async function ChaseInboxPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Chase Email Approval Inbox</h1>
+      <Link href="/sessions" className="text-sm text-muted-foreground underline">
+        ← All sessions
+      </Link>
+      <h1 className="mt-4 text-2xl font-semibold tracking-tight">Chase Email Approval Inbox</h1>
       <p className="mt-1 text-sm text-muted-foreground">
         Drafts awaiting approval, and approved drafts awaiting send.
       </p>

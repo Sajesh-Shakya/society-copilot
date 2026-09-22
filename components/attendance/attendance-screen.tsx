@@ -1,10 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -19,6 +21,7 @@ import {
   triggerManualSync,
   getAttendanceList,
 } from "@/lib/attendance/actions";
+import { fuzzyMatches } from "@/lib/attendance/fuzzy-match";
 import type { AttendanceRow, SessionWithAttendance } from "@/lib/attendance/queries";
 import { AddAttendee } from "@/components/attendance/add-attendee";
 import { SignOutButton } from "@/components/auth/sign-out-button";
@@ -33,6 +36,7 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
   const [rows, setRows] = useState<AttendanceRow[]>(session.attendance);
   const [isSyncing, startSync] = useTransition();
   const [showEmails, setShowEmails] = useState(false);
+  const [search, setSearch] = useState("");
 
   // AC-3: propagate toggle changes to every open attendance screen for this
   // session within 2s. UPDATE payloads carry attended directly, so patch
@@ -101,8 +105,18 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
     });
   }
 
+  const matchCount = search.trim()
+    ? rows.filter((r) => fuzzyMatches(search, r.fullName)).length
+    : 0;
+
   return (
     <div className="flex flex-col gap-6">
+      <div>
+        <Link href="/sessions" className="text-sm text-muted-foreground underline">
+          ← All sessions
+        </Link>
+      </div>
+
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{session.title}</h1>
@@ -124,6 +138,21 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
         </div>
       </div>
 
+      {rows.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Find someone on this roster (typo-tolerant)…"
+          />
+          {search.trim() && (
+            <p className="text-xs text-muted-foreground">
+              {matchCount === 0 ? "No matches" : `${matchCount} match${matchCount === 1 ? "" : "es"} highlighted below`}
+            </p>
+          )}
+        </div>
+      )}
+
       {rows.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">
           No one on the roster yet — try syncing, or add someone below.
@@ -131,15 +160,17 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
       ) : (
         <>
           <AttendanceGroup
-            title="Attended"
-            rows={rows.filter((r) => r.attended)}
-            showEmails={showEmails}
-            onToggle={handleToggle}
-          />
-          <AttendanceGroup
             title="Not attended"
             rows={rows.filter((r) => !r.attended)}
             showEmails={showEmails}
+            search={search}
+            onToggle={handleToggle}
+          />
+          <AttendanceGroup
+            title="Attended"
+            rows={rows.filter((r) => r.attended)}
+            showEmails={showEmails}
+            search={search}
             onToggle={handleToggle}
           />
         </>
@@ -158,11 +189,13 @@ function AttendanceGroup({
   title,
   rows,
   showEmails,
+  search,
   onToggle,
 }: {
   title: string;
   rows: AttendanceRow[];
   showEmails: boolean;
+  search: string;
   onToggle: (row: AttendanceRow, attended: boolean) => void;
 }) {
   return (
@@ -179,24 +212,27 @@ function AttendanceGroup({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((row) => (
-            <TableRow key={row.personId}>
-              <TableCell>
-                <Checkbox
-                  checked={row.attended}
-                  onCheckedChange={(checked) => onToggle(row, checked === true)}
-                  aria-label={`Mark ${row.fullName} ${row.attended ? "not attended" : "attended"}`}
-                />
-              </TableCell>
-              <TableCell className={row.attended ? "" : "text-muted-foreground"}>
-                <div>{row.fullName}</div>
-                {showEmails && <div className="text-xs text-muted-foreground">{row.email}</div>}
-              </TableCell>
-              <TableCell>
-                <Badge variant="secondary">{SOURCE_LABEL[row.source]}</Badge>
-              </TableCell>
-            </TableRow>
-          ))}
+          {rows.map((row) => {
+            const isMatch = search.trim() !== "" && fuzzyMatches(search, row.fullName);
+            return (
+              <TableRow key={row.personId} className={isMatch ? "bg-yellow-100 dark:bg-yellow-900/30" : undefined}>
+                <TableCell>
+                  <Checkbox
+                    checked={row.attended}
+                    onCheckedChange={(checked) => onToggle(row, checked === true)}
+                    aria-label={`Mark ${row.fullName} ${row.attended ? "not attended" : "attended"}`}
+                  />
+                </TableCell>
+                <TableCell className={row.attended ? "" : "text-muted-foreground"}>
+                  <div>{row.fullName}</div>
+                  {showEmails && <div className="text-xs text-muted-foreground">{row.email}</div>}
+                </TableCell>
+                <TableCell>
+                  <Badge variant="secondary">{SOURCE_LABEL[row.source]}</Badge>
+                </TableCell>
+              </TableRow>
+            );
+          })}
           {rows.length === 0 && (
             <TableRow>
               <TableCell colSpan={3} className="py-4 text-center text-sm text-muted-foreground">
