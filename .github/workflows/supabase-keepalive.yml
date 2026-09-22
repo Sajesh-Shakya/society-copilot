@@ -1,0 +1,16 @@
+name: Supabase Keep-Alive
+on:
+  schedule:
+    - cron: "0 6 * * 1,4" # Mon & Thu — gap between pings stays under Supabase's 7-day pause
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST endpoint
+        run: |
+          curl -sf -X GET \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/" \
+            -H "apikey: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}"
