@@ -26,6 +26,19 @@ satisfies.
   duplicating or losing existing ticks.
 - **AC-7.** THE system SHALL also trigger a sync automatically approximately 1
   hour before a session's start time.
+- **AC-8.** WHEN an admin creates a session, THE system SHALL require them to
+  select exactly one eActivities signup from the event's attached signups
+  (there is no automatic way to determine which signup, if any, represents
+  attendance — an event may have signups for unrelated purposes), and SHALL
+  store that selection for use by all subsequent syncs of that session.
+- **AC-9.** WHEN an admin signs in, THE system SHALL show them a list of
+  recent sessions (with today's session, if one exists, distinguished from
+  older ones) that they can navigate into directly, rather than forcing
+  creation of a new session on every sign-in.
+- **AC-10.** WHEN an admin searches for a person to add to a session (AC-4),
+  THE system SHALL match on email as well as full name, since email is the
+  person record's unique identifier and a name search alone can miss a
+  correctly-spelled email with an unfamiliar or misspelled name.
 
 ## Membership & Purchases
 

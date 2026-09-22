@@ -287,3 +287,25 @@ in this schema.
 auto-excludes each person's chronologically-earliest ATTENDED
 `attendance_record` (by `session.starts_at`) from debt calculation — no
 schema flag, no admin action needed.
+
+### d. Session navigation & email search — RESOLVED (2026-09-22)
+
+Two usability gaps identified directly by the user (not from the original
+task list): there was no way to get back to an already-created session
+without knowing its raw UUID (every login forced a brand-new session via
+`/sessions/new`), and person search only matched on name, missing a
+correctly-spelled email attached to an unfamiliar or misspelled name.
+
+**AC-9 (session navigation):** a new `/sessions` index page lists sessions
+from the last 30 days plus any future-dated session, newest-starting first,
+with a same-UTC-calendar-day "Today" section pinned above the rest. The
+post-login redirect (`app/auth/callback/route.ts`) now points at `/sessions`
+instead of unconditionally forcing `/sessions/new`; a "New session" button
+on the index page reaches the unchanged creation flow. No per-admin
+timezone handling — matches this feature's existing UTC-only date
+arithmetic elsewhere (e.g. the chase-email cadence).
+
+**AC-10 (email search):** `search_person_by_name` (the existing pg_trgm
+fuzzy-name RPC) now also substring-matches on `email`, ranked above fuzzy
+name matches since an email substring hit is exact rather than approximate.
+Same function name/signature/return shape — no caller changes needed.
