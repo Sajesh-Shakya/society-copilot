@@ -70,3 +70,60 @@ export async function getSessionWithAttendance(
     attendance,
   };
 }
+
+export interface SessionListItem {
+  id: string;
+  title: string;
+  startsAt: string;
+  attendeeCount: number;
+  isToday: boolean;
+}
+
+function isUtcToday(iso: string): boolean {
+  const d = new Date(iso);
+  const now = new Date();
+  return (
+    d.getUTCFullYear() === now.getUTCFullYear() &&
+    d.getUTCMonth() === now.getUTCMonth() &&
+    d.getUTCDate() === now.getUTCDate()
+  );
+}
+
+/**
+ * AC-9: sessions from the last 30 days, plus any future-dated session (a
+ * session can be created ahead of its start time), newest-starting first.
+ * Server-only read (admin client) -- caller checks admin identity first,
+ * same convention as getSessionWithAttendance above.
+ */
+export async function listRecentSessions(): Promise<SessionListItem[]> {
+  const admin = createAdminClient();
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: sessions, error: sessionsError } = await admin
+    .from("session")
+    .select("id, title, starts_at")
+    .gte("starts_at", thirtyDaysAgo)
+    .order("starts_at", { ascending: false });
+  if (sessionsError) throw sessionsError;
+
+  const sessionIds = (sessions ?? []).map((s) => s.id);
+  const countsBySessionId = new Map<string, number>();
+  if (sessionIds.length > 0) {
+    const { data: attendanceRows, error: attendanceError } = await admin
+      .from("attendance_record")
+      .select("session_id")
+      .in("session_id", sessionIds);
+    if (attendanceError) throw attendanceError;
+    for (const row of attendanceRows ?? []) {
+      countsBySessionId.set(row.session_id, (countsBySessionId.get(row.session_id) ?? 0) + 1);
+    }
+  }
+
+  return (sessions ?? []).map((s) => ({
+    id: s.id,
+    title: s.title,
+    startsAt: s.starts_at,
+    attendeeCount: countsBySessionId.get(s.id) ?? 0,
+    isToday: isUtcToday(s.starts_at),
+  }));
+}
