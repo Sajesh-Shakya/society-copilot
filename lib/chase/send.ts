@@ -67,13 +67,17 @@ export async function sendChaseEmail(
     return { sent: false, reason: "debt_cleared" };
   }
 
-  const { error: sendError } = await admin
+  const { data: sentRows, error: sendError } = await admin
     .from("chase_email")
     .update({ status: "sent", sent_at: new Date().toISOString() })
     .eq("id", chaseEmailId)
-    .eq("status", "approved");
+    .eq("status", "approved")
+    .select("id");
   if (sendError) {
     throw new Error(`Failed to send chase_email ${chaseEmailId}: ${sendError.message}`);
+  }
+  if ((sentRows?.length ?? 0) === 0) {
+    return { sent: false, reason: "stale" };
   }
 
   return { sent: true };

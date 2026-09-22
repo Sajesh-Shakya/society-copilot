@@ -107,7 +107,8 @@ test.describe("rejectChaseEmail", () => {
       .single();
     if (error) throw error;
     expect(row.status).toBe("cancelled");
-    expect(row.note).toBe("Wrong person, they already paid in cash.");
+    expect(row.note).toContain("Wrong person, they already paid in cash.");
+    expect(row.note).toContain(TEST_ADMIN_EMAIL);
   });
 
   test("rejects an approved (not yet sent) row too", async () => {
@@ -140,5 +141,12 @@ test.describe("rejectChaseEmail", () => {
     const chaseEmailId = await createChaseEmail(personId, "pending_approval");
 
     await expect(rejectChaseEmail(chaseEmailId, "", TEST_ADMIN_EMAIL)).rejects.toThrow();
+  });
+
+  test("rejects a whitespace-only note as invalid input", async () => {
+    personId = await createPerson();
+    const chaseEmailId = await createChaseEmail(personId, "pending_approval");
+
+    await expect(rejectChaseEmail(chaseEmailId, "   ", TEST_ADMIN_EMAIL)).rejects.toThrow();
   });
 });

@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const rejectChaseEmailSchema = z.object({
   chaseEmailId: z.string().uuid(),
-  note: z.string().min(1).max(1000),
+  note: z.string().trim().min(1).max(1000),
   actorEmail: z.string(),
 });
 
@@ -49,9 +49,13 @@ export async function rejectChaseEmail(
 ): Promise<{ rejected: boolean }> {
   const parsed = rejectChaseEmailSchema.parse({ chaseEmailId, note, actorEmail });
   const admin = createAdminClient();
+  // Prefix with who/when rather than adding a new column -- chase_email's
+  // own columns are this feature's audit trail (see design.md), and this
+  // is the one write path that previously dropped that attribution.
+  const attributedNote = `${parsed.actorEmail} @ ${new Date().toISOString()}: ${parsed.note}`;
   const { data, error } = await admin
     .from("chase_email")
-    .update({ status: "cancelled", note: parsed.note })
+    .update({ status: "cancelled", note: attributedNote })
     .eq("id", parsed.chaseEmailId)
     .in("status", ["pending_approval", "approved"])
     .select("id");
