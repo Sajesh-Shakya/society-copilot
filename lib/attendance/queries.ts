@@ -109,10 +109,22 @@ export async function listRecentSessions(): Promise<SessionListItem[]> {
   const sessionIds = (sessions ?? []).map((s) => s.id);
   const countsBySessionId = new Map<string, number>();
   if (sessionIds.length > 0) {
+    // Only rows actually marked attended count as "attendees" -- an
+    // attendance_record can be unticked (toggleAttendance sets
+    // attended:false rather than deleting the row) or come from an
+    // eActivities signup nobody showed up to, and the index page's count
+    // must agree with what /sessions/[id] shows for the same session.
+    //
+    // .range() is set explicitly (rather than relying on the default
+    // page size) so PostgREST's default max-rows cap can't silently
+    // truncate the count once total attendance across this 30-day window
+    // grows past it.
     const { data: attendanceRows, error: attendanceError } = await admin
       .from("attendance_record")
       .select("session_id")
-      .in("session_id", sessionIds);
+      .eq("attended", true)
+      .in("session_id", sessionIds)
+      .range(0, 9999);
     if (attendanceError) throw attendanceError;
     for (const row of attendanceRows ?? []) {
       countsBySessionId.set(row.session_id, (countsBySessionId.get(row.session_id) ?? 0) + 1);

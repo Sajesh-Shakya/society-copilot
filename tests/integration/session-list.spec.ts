@@ -95,15 +95,21 @@ test.describe("listRecentSessions", () => {
     expect(results.some((r) => r.id === id)).toBe(true);
   });
 
-  test("reports the correct attendee count", async () => {
+  test("reports the correct attendee count, excluding un-ticked attendance", async () => {
     const sessionId = await createSession("Attendee Count Test Session", new Date());
     sessionIds.push(sessionId);
-    const personId = await createPerson();
-    personIds.push(personId);
-    const { error } = await admin
+    const attendedPersonId = await createPerson();
+    const notAttendedPersonId = await createPerson();
+    personIds.push(attendedPersonId, notAttendedPersonId);
+
+    const { error: attendedError } = await admin
       .from("attendance_record")
-      .insert({ person_id: personId, session_id: sessionId, source: "manual_tick" });
-    if (error) throw error;
+      .insert({ person_id: attendedPersonId, session_id: sessionId, source: "manual_tick", attended: true });
+    if (attendedError) throw attendedError;
+    const { error: notAttendedError } = await admin
+      .from("attendance_record")
+      .insert({ person_id: notAttendedPersonId, session_id: sessionId, source: "manual_tick", attended: false });
+    if (notAttendedError) throw notAttendedError;
 
     const results = await listRecentSessions();
     const found = results.find((r) => r.id === sessionId);
