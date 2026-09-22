@@ -56,6 +56,17 @@ Table Editor). This takes effect immediately, on their very next request —
 `requireAdmin()` re-checks the allowlist on every call, not just at login —
 without needing to also delete or disable their Supabase Auth account.
 
+## Mock data
+
+`scripts/seed-mock-data.sql` seeds a realistic dataset for exploring the UI:
+products, 5 sessions (past + one upcoming), 12 people covering the interesting
+cases (a free-trial-only newcomer, ordinary unpaid debt, debt waived by a
+session pass, debt covered by a term pass, an exempt member, a provisional
+walk-in identity, an unmatched purchase for the manual-match queue), and a
+run of the real chase-email generator on top of it. Safe to re-run — every
+row has a fixed UUID and every statement is `ON CONFLICT`-safe. Run it via
+the Supabase SQL editor or `mcp__supabase__execute_sql`.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
