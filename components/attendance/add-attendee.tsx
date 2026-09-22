@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -55,7 +56,12 @@ export function AddAttendee({
     startTransition(async () => {
       try {
         const found = await searchPeople(value);
-        setResults(found.filter((r) => !existingPersonIds.includes(r.id)));
+        // Show every match, including people already on this session's
+        // list -- silently filtering them out (the old behavior) made a
+        // duplicate-add attempt look identical to "no matches", which
+        // could push an admin into creating a genuine duplicate person via
+        // the walk-in form below instead.
+        setResults(found);
       } catch {
         toast.error("Search failed");
       }
@@ -86,7 +92,7 @@ export function AddAttendee({
     if (!walkInEmail || !walkInName) return;
     startTransition(async () => {
       try {
-        const { personId } = await createWalkIn({
+        const { personId, reusedExisting } = await createWalkIn({
           sessionId,
           email: walkInEmail,
           fullName: walkInName,
@@ -98,9 +104,13 @@ export function AddAttendee({
           fullName: walkInName,
           email: walkInEmail,
           attended: true,
-          source: "walk_in",
+          source: reusedExisting ? "manual_tick" : "walk_in",
         });
-        toast.success(`Added ${walkInName} as a walk-in`);
+        toast.success(
+          reusedExisting
+            ? `${walkInName} already existed with that email — added to this session instead of creating a duplicate`
+            : `Added ${walkInName} as a walk-in`
+        );
         reset();
       } catch {
         toast.error("Couldn't add walk-in — check the email is valid");
@@ -132,17 +142,24 @@ export function AddAttendee({
 
         {results && results.length > 0 && (
           <ul className="flex flex-col gap-1">
-            {results.map((person) => (
-              <li key={person.id} className="flex items-center justify-between gap-2 py-1">
-                <div>
-                  <div className="text-sm">{person.fullName}</div>
-                  <div className="text-xs text-muted-foreground">{person.email}</div>
-                </div>
-                <Button size="sm" variant="secondary" onClick={() => handleAddExisting(person)} disabled={isPending}>
-                  Add
-                </Button>
-              </li>
-            ))}
+            {results.map((person) => {
+              const alreadyAdded = existingPersonIds.includes(person.id);
+              return (
+                <li key={person.id} className="flex items-center justify-between gap-2 py-1">
+                  <div>
+                    <div className="text-sm">{person.fullName}</div>
+                    <div className="text-xs text-muted-foreground">{person.email}</div>
+                  </div>
+                  {alreadyAdded ? (
+                    <Badge variant="secondary">Already on this list</Badge>
+                  ) : (
+                    <Button size="sm" variant="secondary" onClick={() => handleAddExisting(person)} disabled={isPending}>
+                      Add
+                    </Button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
 

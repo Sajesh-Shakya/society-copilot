@@ -170,32 +170,57 @@ const walkInSchema = z.object({
   shortcode: z.string().max(50).optional(),
 });
 
-export async function createWalkIn(input: z.infer<typeof walkInSchema>) {
+export async function createWalkIn(
+  input: z.infer<typeof walkInSchema>
+): Promise<{ personId: string; reusedExisting: boolean }> {
   await requireAdmin();
   const { sessionId, email, fullName, shortcode } = walkInSchema.parse(input);
   const admin = createAdminClient();
 
-  const { data: person, error: personError } = await admin
+  // Someone searching the roster only sees people already on *this*
+  // session's list filtered out (see AddAttendee) — they can still land
+  // here via "create new person" for someone who already exists in the
+  // `person` table generally (a different session, or added before this
+  // one existed). person.email has no DB-level unique constraint, so
+  // without this check every such case would silently create a duplicate
+  // person row instead of reusing the real one.
+  const { data: existing, error: existingError } = await admin
     .from("person")
-    .insert({
-      email,
-      full_name: fullName,
-      shortcode: shortcode || null,
-      identity_confidence: "provisional",
-    })
     .select("id")
-    .single();
-  if (personError) throw personError;
+    .ilike("email", email)
+    .maybeSingle();
+  if (existingError) throw existingError;
 
-  const { error: attendanceError } = await admin.from("attendance_record").insert({
-    person_id: person.id,
-    session_id: sessionId,
-    attended: true,
-    source: "walk_in",
-  });
+  let personId: string;
+  if (existing) {
+    personId = existing.id;
+  } else {
+    const { data: person, error: personError } = await admin
+      .from("person")
+      .insert({
+        email,
+        full_name: fullName,
+        shortcode: shortcode || null,
+        identity_confidence: "provisional",
+      })
+      .select("id")
+      .single();
+    if (personError) throw personError;
+    personId = person.id;
+  }
+
+  const { error: attendanceError } = await admin.from("attendance_record").upsert(
+    {
+      person_id: personId,
+      session_id: sessionId,
+      attended: true,
+      source: existing ? "manual_tick" : "walk_in",
+    },
+    { onConflict: "person_id,session_id" }
+  );
   if (attendanceError) throw attendanceError;
 
-  return { personId: person.id };
+  return { personId, reusedExisting: !!existing };
 }
 
 // ---------------------------------------------------------------------------

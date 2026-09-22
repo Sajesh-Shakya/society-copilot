@@ -32,6 +32,7 @@ const SOURCE_LABEL: Record<AttendanceRow["source"], string> = {
 export function AttendanceScreen({ session }: { session: SessionWithAttendance }) {
   const [rows, setRows] = useState<AttendanceRow[]>(session.attendance);
   const [isSyncing, startSync] = useTransition();
+  const [showEmails, setShowEmails] = useState(false);
 
   // AC-3: propagate toggle changes to every open attendance screen for this
   // session within 2s. UPDATE payloads carry attended directly, so patch
@@ -113,6 +114,9 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setShowEmails((v) => !v)}>
+            {showEmails ? "Hide emails" : "Show emails"}
+          </Button>
           <Button variant="outline" onClick={handleSync} disabled={isSyncing}>
             {isSyncing ? "Syncing…" : "Sync now"}
           </Button>
@@ -120,7 +124,53 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
         </div>
       </div>
 
-      <Table>
+      {rows.length === 0 ? (
+        <p className="py-8 text-center text-sm text-muted-foreground">
+          No one on the roster yet — try syncing, or add someone below.
+        </p>
+      ) : (
+        <>
+          <AttendanceGroup
+            title="Attended"
+            rows={rows.filter((r) => r.attended)}
+            showEmails={showEmails}
+            onToggle={handleToggle}
+          />
+          <AttendanceGroup
+            title="Not attended"
+            rows={rows.filter((r) => !r.attended)}
+            showEmails={showEmails}
+            onToggle={handleToggle}
+          />
+        </>
+      )}
+
+      <AddAttendee
+        sessionId={session.id}
+        existingPersonIds={rows.map((r) => r.personId)}
+        onAdded={(row) => setRows((prev) => [...prev, row].sort((a, b) => a.fullName.localeCompare(b.fullName)))}
+      />
+    </div>
+  );
+}
+
+function AttendanceGroup({
+  title,
+  rows,
+  showEmails,
+  onToggle,
+}: {
+  title: string;
+  rows: AttendanceRow[];
+  showEmails: boolean;
+  onToggle: (row: AttendanceRow, attended: boolean) => void;
+}) {
+  return (
+    <div>
+      <h2 className="text-sm font-semibold text-muted-foreground">
+        {title} ({rows.length})
+      </h2>
+      <Table className="mt-2">
         <TableHeader>
           <TableRow>
             <TableHead className="w-10"></TableHead>
@@ -134,12 +184,13 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
               <TableCell>
                 <Checkbox
                   checked={row.attended}
-                  onCheckedChange={(checked) => handleToggle(row, checked === true)}
+                  onCheckedChange={(checked) => onToggle(row, checked === true)}
                   aria-label={`Mark ${row.fullName} ${row.attended ? "not attended" : "attended"}`}
                 />
               </TableCell>
               <TableCell className={row.attended ? "" : "text-muted-foreground"}>
-                {row.fullName}
+                <div>{row.fullName}</div>
+                {showEmails && <div className="text-xs text-muted-foreground">{row.email}</div>}
               </TableCell>
               <TableCell>
                 <Badge variant="secondary">{SOURCE_LABEL[row.source]}</Badge>
@@ -148,19 +199,13 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
           ))}
           {rows.length === 0 && (
             <TableRow>
-              <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
-                No one on the roster yet — try syncing, or add someone below.
+              <TableCell colSpan={3} className="py-4 text-center text-sm text-muted-foreground">
+                None.
               </TableCell>
             </TableRow>
           )}
         </TableBody>
       </Table>
-
-      <AddAttendee
-        sessionId={session.id}
-        existingPersonIds={rows.map((r) => r.personId)}
-        onAdded={(row) => setRows((prev) => [...prev, row].sort((a, b) => a.fullName.localeCompare(b.fullName)))}
-      />
     </div>
   );
 }

@@ -30,6 +30,15 @@ export default async function SessionsIndexPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/admin/unpaid">Unpaid sessions</Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/admin/chase-inbox">Chase inbox</Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/admin/purchases">Purchases</Link>
+          </Button>
           <Button asChild variant="outline">
             <Link href="/sessions/new">New session</Link>
           </Button>
