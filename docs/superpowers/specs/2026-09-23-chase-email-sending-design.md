@@ -47,6 +47,22 @@ root-causing it further.
   having to proactively open the chase inbox and notice a status value in a
   list. Since sending happens via an unattended cron job, a failure nobody
   notices for weeks defeats the point of tracking it.
+- **Atomic claim before sending**: a row must be claimed (status flipped
+  from `approved` to an in-flight state) via a conditional update *before*
+  the Resend call, not just checked-then-updated-after. This closes the
+  race where the cron and a manual "Send" click both read `status =
+  'approved'`, both pass the exempt/debt checks, and both call Resend
+  before either has recorded the outcome — the same double-send risk class
+  already guarded against for attendance ticking (`onConflict` upserts).
+- **Idempotency key on the Resend call**: pass `chase_email.id` as Resend's
+  idempotency key on every send attempt for that row. This is a second
+  layer of protection: if our own status write fails or times out *after*
+  Resend has already accepted the send, a later manual retry (same row,
+  same key) is deduplicated by Resend itself rather than risking a real
+  duplicate email.
+- **Scoped API key**: create `RESEND_API_KEY` with sending-only
+  permissions in Resend's dashboard (not a full-access key), if that
+  scoping option is available.
 
 ## Goals
 
@@ -78,7 +94,12 @@ never talks to Resend's SDK directly:
 ```ts
 // lib/email/types.ts
 export interface EmailChannelAdapter {
-  send(input: { to: string; subject: string; body: string }): Promise<{ providerMessageId: string }>;
+  send(input: {
+    to: string;
+    subject: string;
+    body: string;
+    idempotencyKey: string; // chase_email.id -- see "Idempotency key" below
+  }): Promise<{ providerMessageId: string }>;
   // Rejects (throws) on failure; the caller is responsible for turning
   // that into a `failed` chase_email row, not the adapter.
 }
@@ -87,17 +108,30 @@ export interface EmailChannelAdapter {
 ```ts
 // lib/email/resend-adapter.ts
 export class ResendEmailAdapter implements EmailChannelAdapter {
-  async send({ to, subject, body }) {
+  async send({ to, subject, body, idempotencyKey }) {
     // Uses RESEND_API_KEY / CHASE_FROM_EMAIL from env.
     // reply_to is always "judo@ic.ac.uk" -- not caller-configurable, since
     // there's currently exactly one reply destination for this product.
+    // idempotencyKey is passed as Resend's Idempotency-Key header.
   }
 }
 ```
 
 `lib/chase/send.ts` constructs a `ResendEmailAdapter` (module-level, same
-pattern as `createAdminClient()`) and calls it between the existing
-exempt/debt-cleared checks and the final status update.
+pattern as `createAdminClient()`) and calls it after atomically claiming
+the row (see "Atomic claim" below), passing `chaseEmailId` as
+`idempotencyKey`.
+
+### Idempotency key
+
+Resend's send endpoint accepts an `Idempotency-Key` header: a repeated
+request with the same key returns the original result instead of sending
+again. Using `chase_email.id` as that key means every send *attempt* for a
+given row -- the first try and any later manual retry after a `failed`
+status -- shares one key. If Resend already accepted an earlier attempt but
+our status write never landed (timeout, crash), a retry can't produce a
+second real email: Resend recognizes the key and returns the original
+`providerMessageId`.
 
 ## Data flow
 
@@ -107,7 +141,12 @@ processAutoSends() / "Send" button (ApprovalActions)
        -> [existing] fetch row, check status === 'approved'
        -> [existing] check person.is_exempt -> cancel if true
        -> [existing] getOutstandingDebt() -> cancel if cleared
-       -> [NEW] fetch person.email, adapter.send({ to, subject, body })
+       -> [NEW] atomic claim: UPDATE chase_email SET status = 'sending'
+            WHERE id = :id AND status = 'approved' RETURNING id
+            -> 0 rows affected: another caller already claimed/actioned
+               this row -> return { sent: false, reason: 'stale' }
+       -> [NEW] fetch person.email, adapter.send({ to, subject, body,
+            idempotencyKey: chaseEmailId })
             -> success: update row { status: 'sent', sent_at, provider_message_id }
             -> failure: update row { status: 'failed', note: <error message> }
        -> return { sent: boolean, reason?: string }
@@ -115,7 +154,9 @@ processAutoSends() / "Send" button (ApprovalActions)
 
 The pre-send exempt/debt-recheck ordering is unchanged — those checks still
 run, and still cancel, *before* any Resend call is made, so an
-already-cleared debt never triggers a real send attempt.
+already-cleared debt never triggers a real send attempt. The atomic claim
+sits immediately after those checks and immediately before the Resend
+call, so only one caller can ever proceed past it for a given row.
 
 ## Schema changes
 
@@ -124,10 +165,17 @@ One migration, `alter_chase_email_add_failed_status_and_provider_id`:
 ```sql
 alter table chase_email drop constraint chase_email_status_check;
 alter table chase_email add constraint chase_email_status_check
-  check (status in ('draft','pending_approval','approved','sent','cancelled','failed'));
+  check (status in ('draft','pending_approval','approved','sending','sent','cancelled','failed'));
 
 alter table chase_email add column provider_message_id text;
 ```
+
+`sending` is the atomic-claim state from "Data flow" above: a row sits
+there only for the duration of one `sendChaseEmail()` call, and always
+exits it to either `sent` or `failed`. It should never be visible as a
+steady-state value in normal operation; if a row is ever found stuck at
+`sending` (e.g. the process crashed mid-call), that's a bug to
+investigate, not an expected state the UI needs to handle gracefully.
 
 `note` (already an existing column, used today for cancellation reasons) is
 reused for the Resend error message on failure — no new column needed for
@@ -135,6 +183,11 @@ that.
 
 ## Error handling
 
+- **Claim fails** (0 rows affected by the `approved -> sending` conditional
+  update): another caller already claimed this row. Returns
+  `{ sent: false, reason: 'stale' }` — the same reason already used for the
+  pre-existing end-of-function stale check, since it's the same class of
+  "someone else got here first" outcome.
 - **Adapter throws** (network error, Resend 4xx/5xx, invalid `to` address,
   etc.): caught in `sendChaseEmail()`, row updated to
   `{ status: 'failed', note: <error.message, truncated> }`. The function
@@ -159,6 +212,13 @@ sends in that loop only — cheap insurance against Resend's per-second limit
 for a mailing pattern that's inherently low-volume (a university society's
 debtor list), not a general throttling system.
 
+**Not blocking, flagged for later**: at current scale (tens of debtors) a
+250ms/row delay inside one Vercel function invocation is trivial. If the
+debtor list grows substantially, a serial delay loop inside a single cron
+invocation could eventually approach Vercel's function execution timeout.
+Not a concern today — leave an inline comment noting it so it's not
+forgotten if batch size changes materially.
+
 ## Failure visibility
 
 `/app/sessions/page.tsx` is the page every admin lands on first (root `/`
@@ -180,7 +240,9 @@ existing "Send" flow can retry it) instead of "Send"/"Reject".
 
 New env vars (`.env.local`, and Vercel project env for production):
 
-- `RESEND_API_KEY`
+- `RESEND_API_KEY` — create this key scoped to sending-only permissions in
+  Resend's dashboard, if that option is available, rather than a
+  full-access key.
 - `CHASE_FROM_EMAIL` — the verified subdomain sender address (e.g.
   `payments@mail.<domain>`)
 
@@ -194,9 +256,13 @@ remove them from `.env.local` and Vercel once confirmed unused.
   `sendChaseEmail()`'s branching against a fake `EmailChannelAdapter`
   (constructor-injected or module-mockable) that can be made to resolve or
   reject, covering: success path (status/provider_message_id set),
-  adapter-throws path (status becomes `failed`, note set), and confirming
-  the existing exempt/debt-cleared cancellation paths still short-circuit
-  before the adapter is ever called.
+  adapter-throws path (status becomes `failed`, note set), confirming the
+  existing exempt/debt-cleared cancellation paths still short-circuit
+  before the adapter is ever called, the claim being called with
+  `idempotencyKey: chaseEmailId`, and a pre-claimed row (simulated by
+  pre-setting status to something other than `approved` between the debt
+  check and the claim update) returning `{ sent: false, reason: 'stale' }`
+  without calling the adapter.
 - `processAutoSends()`: extend existing tests (if any) to cover a mixed
   batch (one success, one failure, one already-cancelled) and assert the
   returned counts.
