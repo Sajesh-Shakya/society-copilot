@@ -1,19 +1,26 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getOutstandingDebt } from "@/lib/debt/calculator";
+import type { EmailChannelAdapter } from "@/lib/email/types";
+import { resendEmailAdapter } from "@/lib/email/resend-adapter";
 
 // Session addition (not in the original tasks.md text, requested directly
 // this session): re-check live debt immediately before sending. A chase
 // email can sit approved for days; if the person paid in the meantime, this
 // cancels the send instead of chasing a cleared debt. See design.md's
 // "Pre-send debt recheck" architecture decision.
+//
+// `adapter` defaults to the real Resend adapter but is overridable so
+// tests can inject a fake -- see docs/superpowers/specs/2026-09-23-
+// chase-email-sending-design.md.
 export async function sendChaseEmail(
-  chaseEmailId: string
+  chaseEmailId: string,
+  adapter: EmailChannelAdapter = resendEmailAdapter
 ): Promise<{ sent: boolean; reason?: string }> {
   const admin = createAdminClient();
 
   const { data: row, error: fetchError } = await admin
     .from("chase_email")
-    .select("id, person_id, status")
+    .select("id, person_id, status, subject, body")
     .eq("id", chaseEmailId)
     .single();
 
@@ -28,7 +35,7 @@ export async function sendChaseEmail(
 
   const { data: person, error: personError } = await admin
     .from("person")
-    .select("is_exempt")
+    .select("is_exempt, email")
     .eq("id", row.person_id)
     .single();
   if (personError) {
@@ -67,29 +74,81 @@ export async function sendChaseEmail(
     return { sent: false, reason: "debt_cleared" };
   }
 
-  const { data: sentRows, error: sendError } = await admin
+  // Atomic claim: flips this row from 'approved' to 'sending' before any
+  // Resend call is made. If the cron and a manual "Send" click race on the
+  // same row, only one caller's conditional update affects a row -- the
+  // other affects zero rows and bails out as 'stale'. See design.md's
+  // "Atomic claim before sending" decision.
+  const { data: claimedRows, error: claimError } = await admin
     .from("chase_email")
-    .update({ status: "sent", sent_at: new Date().toISOString() })
+    .update({ status: "sending" })
     .eq("id", chaseEmailId)
     .eq("status", "approved")
     .select("id");
-  if (sendError) {
-    throw new Error(`Failed to send chase_email ${chaseEmailId}: ${sendError.message}`);
+  if (claimError) {
+    throw new Error(`Failed to claim chase_email ${chaseEmailId} for sending: ${claimError.message}`);
   }
-  if ((sentRows?.length ?? 0) === 0) {
+  if ((claimedRows?.length ?? 0) === 0) {
     return { sent: false, reason: "stale" };
   }
 
-  return { sent: true };
+  try {
+    // idempotencyKey = this row's id, reused across any retry attempt for
+    // the same row -- a second attempt (e.g. after a failed status write
+    // below) can't produce a real duplicate email. See design.md's
+    // "Idempotency key on the Resend call" decision.
+    const { providerMessageId } = await adapter.send({
+      to: person.email,
+      subject: row.subject,
+      body: row.body,
+      idempotencyKey: chaseEmailId,
+    });
+
+    const { error: sendError } = await admin
+      .from("chase_email")
+      .update({
+        status: "sent",
+        sent_at: new Date().toISOString(),
+        provider_message_id: providerMessageId,
+      })
+      .eq("id", chaseEmailId);
+    if (sendError) {
+      throw new Error(`Failed to record sent chase_email ${chaseEmailId}: ${sendError.message}`);
+    }
+    return { sent: true };
+  } catch (sendAttemptError) {
+    // Covers both an adapter.send() rejection and a failed status write
+    // after a successful send -- either way, a human needs to see this
+    // and decide whether to retry (never automatic; see "Failure
+    // handling" in the design doc). A retry reuses the same
+    // idempotencyKey above, so it's safe even if the email actually went
+    // out the first time.
+    const message =
+      sendAttemptError instanceof Error ? sendAttemptError.message : String(sendAttemptError);
+    const { error: failError } = await admin
+      .from("chase_email")
+      .update({ status: "failed", note: message.slice(0, 1000) })
+      .eq("id", chaseEmailId);
+    if (failError) {
+      throw new Error(`Failed to record failed chase_email ${chaseEmailId}: ${failError.message}`);
+    }
+    return { sent: false, reason: "send_failed" };
+  }
 }
 
 // DC-4's auto-send path: every repeat reminder (sequence_number > 1) that
 // generateChaseEmails() pre-approved under CHASE_AUTO_SEND_REPEATS. Never
 // touches sequence_number = 1 rows -- those always require manual approval
 // (DC-3) and reach `approved` only through a future Phase 7 admin action.
-export async function processAutoSends(): Promise<{ sent: number; cancelled: number }> {
+export async function processAutoSends(
+  adapter: EmailChannelAdapter = resendEmailAdapter
+): Promise<{
+  sent: number;
+  cancelled: number;
+  failed: number;
+}> {
   if (process.env.CHASE_AUTO_SEND_REPEATS !== "true") {
-    return { sent: 0, cancelled: 0 };
+    return { sent: 0, cancelled: 0, failed: 0 };
   }
 
   const admin = createAdminClient();
@@ -103,13 +162,28 @@ export async function processAutoSends(): Promise<{ sent: number; cancelled: num
     throw new Error(`Failed to list auto-sendable chase emails: ${error.message}`);
   }
 
+  const rowsToSend = rows ?? [];
   let sent = 0;
   let cancelled = 0;
-  for (const row of rows ?? []) {
-    const result = await sendChaseEmail(row.id);
+  let failed = 0;
+
+  for (let i = 0; i < rowsToSend.length; i++) {
+    const result = await sendChaseEmail(rowsToSend[i].id, adapter);
     if (result.sent) sent++;
+    else if (result.reason === "send_failed") failed++;
     else cancelled++;
+
+    // Small delay between sends to stay comfortably under Resend's
+    // per-second rate limit -- cheap at this scale (a society's debtor
+    // list is tens of rows, not thousands). NOTE: if the debtor list ever
+    // grows substantially, a serial delay loop inside one Vercel function
+    // invocation could approach its execution timeout -- not a concern
+    // today, but worth revisiting if batch size changes materially. See
+    // design.md's "Rate limiting" section.
+    if (i < rowsToSend.length - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
   }
 
-  return { sent, cancelled };
+  return { sent, cancelled, failed };
 }
