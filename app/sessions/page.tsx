@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireAdmin, UnauthorizedError } from "@/lib/auth/require-admin";
 import { redirect } from "next/navigation";
 import { listRecentSessions } from "@/lib/attendance/queries";
+import { countFailedChaseEmails } from "@/lib/chase/queries";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SignOutButton } from "@/components/auth/sign-out-button";
@@ -16,7 +17,10 @@ export default async function SessionsIndexPage() {
     throw error;
   }
 
-  const sessions = await listRecentSessions();
+  const [sessions, failedChaseCount] = await Promise.all([
+    listRecentSessions(),
+    countFailedChaseEmails(),
+  ]);
   const todaySessions = sessions.filter((s) => s.isToday);
   const otherSessions = sessions.filter((s) => !s.isToday);
 
@@ -34,7 +38,12 @@ export default async function SessionsIndexPage() {
             <Link href="/admin/unpaid">Unpaid sessions</Link>
           </Button>
           <Button asChild variant="ghost" size="sm">
-            <Link href="/admin/chase-inbox">Chase inbox</Link>
+            <Link href="/admin/chase-inbox" className="flex items-center gap-2">
+              Chase inbox
+              {failedChaseCount > 0 && (
+                <Badge variant="destructive">{failedChaseCount} failed</Badge>
+              )}
+            </Link>
           </Button>
           <Button asChild variant="ghost" size="sm">
             <Link href="/admin/purchases">Purchases</Link>
