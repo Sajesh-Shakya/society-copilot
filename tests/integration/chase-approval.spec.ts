@@ -153,6 +153,23 @@ test.describe("rejectChaseEmail", () => {
     expect(row.note).toBeNull();
   });
 
+  test("rejects a failed row so it can be given up on", async () => {
+    personId = await createPerson();
+    const chaseEmailId = await createChaseEmail(personId, "failed");
+
+    const result = await rejectChaseEmail(chaseEmailId, "Email address is permanently undeliverable.", TEST_ADMIN_EMAIL);
+    expect(result.rejected).toBe(true);
+
+    const { data: row, error } = await admin
+      .from("chase_email")
+      .select("status, note")
+      .eq("id", chaseEmailId)
+      .single();
+    if (error) throw error;
+    expect(row.status).toBe("cancelled");
+    expect(row.note).toContain("Email address is permanently undeliverable.");
+  });
+
   test("rejects the empty-string note as invalid input", async () => {
     personId = await createPerson();
     const chaseEmailId = await createChaseEmail(personId, "pending_approval");

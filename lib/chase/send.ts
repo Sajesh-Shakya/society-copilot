@@ -94,9 +94,11 @@ export async function sendChaseEmail(
 
   try {
     // idempotencyKey = this row's id, reused across any retry attempt for
-    // the same row -- a second attempt (e.g. after a failed status write
-    // below) can't produce a real duplicate email. See design.md's
-    // "Idempotency key on the Resend call" decision.
+    // the same row. Resend deduplicates by this key for up to 24 hours
+    // after the first attempt -- if our own status write fails and a human
+    // retries within that window, no real duplicate email is sent; a retry
+    // after 24 hours has no such protection. See design.md's "Idempotency
+    // key on the Resend call" decision.
     const { providerMessageId } = await adapter.send({
       to: person.email,
       subject: row.subject,
@@ -121,8 +123,10 @@ export async function sendChaseEmail(
     // after a successful send -- either way, a human needs to see this
     // and decide whether to retry (never automatic; see "Failure
     // handling" in the design doc). A retry reuses the same
-    // idempotencyKey above, so it's safe even if the email actually went
-    // out the first time.
+    // idempotencyKey above, so Resend dedupes it against the first
+    // attempt as long as the retry happens within 24 hours; past that
+    // window Resend no longer recognizes the key and a retry could send
+    // a real duplicate if the first attempt actually went out.
     const message =
       sendAttemptError instanceof Error ? sendAttemptError.message : String(sendAttemptError);
     const { error: failError } = await admin

@@ -61,7 +61,7 @@ export async function rejectChaseEmail(
     .from("chase_email")
     .update({ status: "cancelled", note: attributedNote })
     .eq("id", parsed.chaseEmailId)
-    .in("status", ["pending_approval", "approved"])
+    .in("status", ["pending_approval", "approved", "failed"])
     .select("id");
 
   if (error) {

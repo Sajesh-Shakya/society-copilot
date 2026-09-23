@@ -36,8 +36,16 @@ export function ApprovalActions({ chaseEmailId, status }: { chaseEmailId: string
       const result = await sendChase(chaseEmailId);
       if (result.sent) {
         toast.success("Sent.");
+      } else if (result.reason === "send_failed") {
+        toast.error("Send failed -- see chase inbox for details.");
       } else {
-        toast.error(`Not sent -- ${result.reason === "exempt" ? "person is now exempt" : "debt was already cleared"}.`);
+        const reasonText =
+          result.reason === "exempt"
+            ? "person is now exempt"
+            : result.reason === "stale"
+              ? "already actioned elsewhere"
+              : "debt was already cleared";
+        toast.error(`Not sent -- ${reasonText}.`);
       }
       router.refresh();
     } catch {
