@@ -17,8 +17,8 @@ export default async function ChaseInboxPage() {
   const admin = createAdminClient();
   const { data: chaseEmails } = await admin
     .from("chase_email")
-    .select("id, person_id, sequence_number, status, subject, body, created_at")
-    .in("status", ["pending_approval", "approved"])
+    .select("id, person_id, sequence_number, status, subject, body, note, created_at")
+    .in("status", ["pending_approval", "approved", "failed"])
     .order("created_at", { ascending: true });
 
   const personIds = [...new Set((chaseEmails ?? []).map((c) => c.person_id))];
@@ -58,6 +58,9 @@ export default async function ChaseInboxPage() {
                 <div className="mt-3 text-sm">
                   <p className="font-medium">{c.subject}</p>
                   <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{c.body}</p>
+                  {c.status === "failed" && c.note && (
+                    <p className="mt-2 text-sm text-destructive">Send failed: {c.note}</p>
+                  )}
                 </div>
               </div>
             );

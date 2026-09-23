@@ -94,9 +94,9 @@ export function ApprovalActions({ chaseEmailId, status }: { chaseEmailId: string
 
   return (
     <div className="flex gap-2">
-      {status === "pending_approval" && (
+      {(status === "pending_approval" || status === "failed") && (
         <Button type="button" size="sm" disabled={isLoading} onClick={handleApprove}>
-          Approve
+          {status === "failed" ? "Retry" : "Approve"}
         </Button>
       )}
       {status === "approved" && (

@@ -9,6 +9,10 @@ const rejectChaseEmailSchema = z.object({
 
 // The actual database writes for DC-3 (approve) and the reject/cancel path
 // (core/RULES.md §10: every rejected draft preserves reviewer feedback).
+// approveChaseEmail also re-approves a 'failed' row -- see
+// docs/superpowers/specs/2026-09-23-chase-email-sending-design.md's
+// "Failure handling": retry is always this manual re-approval, never
+// automatic.
 // Deliberately NOT in a "use server" file: every export of a "use server"
 // module is a reachable Server Action by reference, regardless of whether
 // anything currently imports it, so authorization-sensitive logic must
@@ -29,7 +33,7 @@ export async function approveChaseEmail(
     .from("chase_email")
     .update({ status: "approved", approved_by: actorEmail, approved_at: new Date().toISOString() })
     .eq("id", chaseEmailId)
-    .eq("status", "pending_approval")
+    .in("status", ["pending_approval", "failed"])
     .select("id");
 
   if (error) {

@@ -79,6 +79,23 @@ test.describe("approveChaseEmail", () => {
     expect(row.status).toBe("sent"); // untouched
     expect(row.approved_by).toBeNull();
   });
+
+  test("re-approves a failed row so it becomes retryable", async () => {
+    personId = await createPerson();
+    const chaseEmailId = await createChaseEmail(personId, "failed");
+
+    const result = await approveChaseEmail(chaseEmailId, TEST_ADMIN_EMAIL);
+    expect(result.approved).toBe(true);
+
+    const { data: row, error } = await admin
+      .from("chase_email")
+      .select("status, approved_by")
+      .eq("id", chaseEmailId)
+      .single();
+    if (error) throw error;
+    expect(row.status).toBe("approved");
+    expect(row.approved_by).toBe(TEST_ADMIN_EMAIL);
+  });
 });
 
 test.describe("rejectChaseEmail", () => {
