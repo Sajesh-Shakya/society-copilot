@@ -9,8 +9,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping Supabase REST endpoint
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         run: |
+          set -euo pipefail
+          test -n "$SUPABASE_URL" || { echo "SUPABASE_URL secret is not configured" >&2; exit 1; }
+          test -n "$SUPABASE_PUBLISHABLE_KEY" || { echo "SUPABASE_PUBLISHABLE_KEY secret is not configured" >&2; exit 1; }
           echo "Testing Supabase connection..."
-          curl -v -X GET \
-            "${{ secrets.SUPABASE_URL }}/rest/v1/" \
-            -H "apikey: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}"
+          curl --fail-with-body --location --retry 3 --retry-all-errors \
+            --connect-timeout 10 --max-time 30 \
+            "$SUPABASE_URL/auth/v1/settings" \
+            -H "apikey: $SUPABASE_PUBLISHABLE_KEY"
