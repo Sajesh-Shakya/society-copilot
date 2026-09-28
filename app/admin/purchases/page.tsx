@@ -22,7 +22,7 @@ export default async function AdminPurchasesPage() {
     .limit(20);
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-10">
+    <div className="mx-auto max-w-4xl px-4 py-6 sm:py-10">
       <Link href="/sessions" className="text-sm text-muted-foreground underline">
         ← All sessions
       </Link>
@@ -41,24 +41,26 @@ export default async function AdminPurchasesPage() {
       <div className="mt-8">
         <h2 className="font-semibold">Recent Purchases ({purchases?.length || 0})</h2>
         {purchases && purchases.length > 0 ? (
-          <table className="mt-4 w-full text-sm">
-            <thead>
-              <tr className="border-b">
-                <th className="text-left py-2">Source</th>
-                <th className="text-left py-2">Status</th>
-                <th className="text-left py-2">Purchased</th>
-              </tr>
-            </thead>
-            <tbody>
-              {purchases.map((p) => (
-                <tr key={p.id} className="border-b">
-                  <td className="py-2">{p.source}</td>
-                  <td className="py-2">{p.match_status}</td>
-                  <td className="py-2">{new Date(p.purchased_at).toLocaleDateString()}</td>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b">
+                  <th className="whitespace-nowrap text-left py-2">Source</th>
+                  <th className="whitespace-nowrap text-left py-2">Status</th>
+                  <th className="whitespace-nowrap text-left py-2">Purchased</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {purchases.map((p) => (
+                  <tr key={p.id} className="border-b">
+                    <td className="whitespace-nowrap py-2">{p.source}</td>
+                    <td className="whitespace-nowrap py-2">{p.match_status}</td>
+                    <td className="whitespace-nowrap py-2">{new Date(p.purchased_at).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <p className="mt-4 text-sm text-muted-foreground">No purchases yet.</p>
         )}

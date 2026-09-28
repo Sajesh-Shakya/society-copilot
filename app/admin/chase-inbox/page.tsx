@@ -29,7 +29,7 @@ export default async function ChaseInboxPage() {
   const peopleById = new Map((people ?? []).map((p) => [p.id, p]));
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-10">
+    <div className="mx-auto max-w-4xl px-4 py-6 sm:py-10">
       <Link href="/sessions" className="text-sm text-muted-foreground underline">
         ← All sessions
       </Link>
@@ -44,9 +44,9 @@ export default async function ChaseInboxPage() {
             const person = peopleById.get(c.person_id);
             return (
               <div key={c.id} className="rounded-lg border p-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <p className="font-semibold">
+                    <p className="font-semibold break-words">
                       {person?.full_name ?? "Unknown"} ({person?.email ?? "unknown"})
                     </p>
                     <p className="text-xs text-muted-foreground">

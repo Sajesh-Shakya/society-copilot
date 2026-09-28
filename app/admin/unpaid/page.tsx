@@ -28,8 +28,8 @@ export default async function UnpaidPage() {
   });
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-10">
-      <div className="flex items-start justify-between gap-4">
+    <div className="mx-auto max-w-3xl px-4 py-6 sm:py-10">
+      <div className="flex flex-col items-start gap-4 sm:flex-row sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Unpaid sessions</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -49,13 +49,13 @@ export default async function UnpaidPage() {
           {cycles.map((cycle) => (
             <div
               key={cycle.personId}
-              className="flex items-center justify-between gap-4 rounded-lg border p-4"
+              className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
             >
               <div>
                 <p className="font-medium">{cycle.fullName}</p>
                 <p className="text-xs text-muted-foreground">{cycle.email}</p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <span className="text-xs text-muted-foreground">
                   owing since {new Date(cycle.debtCycleStartedAt).toLocaleDateString()} (
                   {daysAgo(cycle.debtCycleStartedAt)}d ago)

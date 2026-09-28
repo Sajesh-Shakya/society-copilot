@@ -25,15 +25,15 @@ export default async function SessionsIndexPage() {
   const otherSessions = sessions.filter((s) => !s.isToday);
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-10">
-      <div className="flex items-start justify-between gap-4">
+    <div className="mx-auto max-w-2xl px-4 py-6 sm:py-10">
+      <div className="flex flex-col items-start gap-4 sm:flex-row sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Sessions</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Pick a session to take attendance, or create a new one.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button asChild variant="ghost" size="sm">
             <Link href="/admin/unpaid">Unpaid sessions</Link>
           </Button>
@@ -96,13 +96,15 @@ function SessionRow({
   return (
     <Link
       href={`/sessions/${session.id}`}
-      className="flex items-center justify-between rounded-lg border p-4 hover:bg-muted"
+      className="flex flex-col gap-2 rounded-lg border p-4 hover:bg-muted sm:flex-row sm:items-center sm:justify-between sm:gap-4"
     >
       <div>
         <p className="font-medium">{session.title}</p>
         <p className="text-xs text-muted-foreground">{new Date(session.startsAt).toLocaleString()}</p>
       </div>
-      <Badge variant="secondary">{session.attendeeCount} attendee{session.attendeeCount === 1 ? "" : "s"}</Badge>
+      <Badge variant="secondary" className="self-start sm:self-auto">
+        {session.attendeeCount} attendee{session.attendeeCount === 1 ? "" : "s"}
+      </Badge>
     </Link>
   );
 }

@@ -117,7 +117,7 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
         </Link>
       </div>
 
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col items-start gap-4 sm:flex-row sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{session.title}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -127,7 +127,7 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="ghost" size="sm" onClick={() => setShowEmails((v) => !v)}>
             {showEmails ? "Hide emails" : "Show emails"}
           </Button>
