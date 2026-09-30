@@ -16,6 +16,43 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Environment variables
+
+Copy `.env.example` to `.env.local` and fill in the values before running the
+app. Never commit `.env.local` or expose server-only values with the
+`NEXT_PUBLIC_` prefix.
+
+Required for the app and Supabase-backed routes:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `SUPABASE_SECRET_KEY`
+- `NEXT_PUBLIC_SITE_URL`
+- `CRON_SECRET`
+- `SYNC_TRIGGER_SECRET`
+
+Required for eActivities attendance retrieval:
+
+- `EACTIVITIES_API_KEY`: sent as the `X-API-Key` header
+- `EACTIVITIES_CSP_CODE`: used in `/csp/{centre}/...` request paths
+
+The eActivities sync route retrieves attendee data through:
+
+- `GET /csp/{centre}/whatson`
+- `GET /csp/{centre}/whatson/{eventId}`
+- `GET /csp/{centre}/signups/{signupId}`
+
+The production Next.js deployment needs these variables in Vercel. The
+Supabase `eactivities-sync-dispatcher` Edge Function additionally needs
+`SUPABASE_SECRET_KEYS` (JSON containing the project's secret key),
+`CRON_SECRET`, and `VERCEL_APP_URL`. It uses those values to call the
+Next.js `/api/cron/eactivities-sync` route. GitHub Actions does not retrieve
+eActivities data directly.
+
+For chase email sending, also configure `RESEND_API_KEY` and
+`CHASE_FROM_EMAIL`. `CHASE_AUTO_SEND_REPEATS` is optional and defaults to
+manual approval.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
