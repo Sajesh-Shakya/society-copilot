@@ -63,9 +63,24 @@ interface SocietyDataProvider {
 ### Real API reference (signups/attendance surface)
 
 - Base URL: `https://eactivities.union.ic.ac.uk/API`
-- Auth: API key via `X-API-Key` header (Basic Auth with the key as password
-  also works; this codebase uses the header). JSON by default.
-- Env vars: `EACTIVITIES_API_KEY`, `EACTIVITIES_CSP_CODE` (our centre code).
+- Auth: HTTP Basic, API key as the password with an empty username. (The
+  docs also name an `XAPI-Key` header as an alternative — verified against
+  the real API on 2026-10-03 that it does NOT authenticate; Basic auth is
+  the only method confirmed to work. This codebase previously sent a
+  nonexistent `X-API-Key` header and so never authenticated at all — fixed
+  in `lib/eactivities/client.ts`.) JSON by default.
+- Env vars: `EACTIVITIES_API_KEY`, `EACTIVITIES_CSP_CODE` (our centre code;
+  confirmed live: `014` = Judo).
+- **Known live-API issue (not our bug):** `GET /csp/014/whatson`,
+  `/csp/014/signups`, and `/csp/014/profileentry` all return `HTTP 500`
+  with a SOAP-style `<Fault>...A server error occurred.</Fault>` body,
+  even with correct auth. `/csp/014`, `/csp/014/products`, and
+  `/csp/014/reports/members` all return real data fine with the same
+  auth — so this isn't a credentials/CSP-code problem, it's specific to
+  those three endpoints for this CSP. Attendance sync (which needs
+  `whatson`/`signups`) cannot work until this is resolved on Imperial's
+  side — worth reporting to the Student Activities team per the API
+  docs' own guidance.
 - `GET /csp/{centre}/whatson` → `Event[]` (`ID`, `Title`, `Description`,
   `EventStart`, `EventEnd`, `Location`, `PostCode`, `EventType`, `Active`).
 - `GET /csp/{centre}/whatson/{id}` → `EventDetail` — same fields, plus
