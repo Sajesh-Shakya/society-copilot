@@ -18,14 +18,27 @@ test("rejects invalid credentials and stays on /login", async ({ page }) => {
   await expect(page).toHaveURL(/\/login/);
 });
 
-test("requires both fields before the submit button is enabled", async ({ page }) => {
+// Submit is enabled from the start, not gated on React state mirroring the
+// inputs' values -- that pattern (disabled={!email || !password} with
+// value/onChange-controlled inputs) previously left real users unable to
+// sign in at all: browser autofill and password managers (1Password,
+// Bitwarden, Safari/Firefox autofill) often set an input's value directly
+// without firing the `input` event React listens for, so the state-backed
+// `email`/`password` stayed "" and the button stayed permanently disabled
+// even though the fields visually showed the filled-in credentials.
+// Required-field enforcement now happens natively (via `required`) and the
+// Server Action reads the submitted FormData directly, not React state.
+test("submit button is enabled even before fields are filled; native validation blocks an empty submit", async ({
+  page,
+}) => {
   await page.goto("/login");
   const submit = page.getByRole("button", { name: "Sign in" });
-  await expect(submit).toBeDisabled();
-
-  await page.getByLabel("Email").fill("someone@ic.ac.uk");
-  await expect(submit).toBeDisabled();
-
-  await page.getByLabel("Password").fill("something");
   await expect(submit).toBeEnabled();
+
+  await submit.click();
+  // A native required-field validation popup blocks the actual form
+  // submission, so the Server Action never runs and we stay on /login with
+  // no server-side error rendered.
+  await expect(page.getByText("Invalid email or password.")).not.toBeVisible();
+  await expect(page).toHaveURL(/\/login/);
 });
