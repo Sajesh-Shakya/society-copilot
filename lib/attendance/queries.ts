@@ -77,6 +77,7 @@ export interface SessionListItem {
   startsAt: string;
   attendeeCount: number;
   isToday: boolean;
+  isFuture: boolean;
 }
 
 function isUtcToday(iso: string): boolean {
@@ -137,5 +138,6 @@ export async function listRecentSessions(): Promise<SessionListItem[]> {
     startsAt: s.starts_at,
     attendeeCount: countsBySessionId.get(s.id) ?? 0,
     isToday: isUtcToday(s.starts_at),
+    isFuture: new Date(s.starts_at).getTime() > Date.now(),
   }));
 }

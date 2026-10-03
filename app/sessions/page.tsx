@@ -22,7 +22,10 @@ export default async function SessionsIndexPage() {
     countFailedChaseEmails(),
   ]);
   const todaySessions = sessions.filter((s) => s.isToday);
-  const otherSessions = sessions.filter((s) => !s.isToday);
+  // `sessions` is newest-starting-first overall; for "what's coming up"
+  // the soonest session should lead, so this one group is reversed.
+  const upcomingSessions = sessions.filter((s) => !s.isToday && s.isFuture).reverse();
+  const pastSessions = sessions.filter((s) => !s.isToday && !s.isFuture);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6 sm:py-10">
@@ -66,15 +69,24 @@ export default async function SessionsIndexPage() {
         </div>
       )}
 
+      {upcomingSessions.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-sm font-semibold text-muted-foreground">Upcoming</h2>
+          <div className="mt-2 flex flex-col gap-2">
+            {upcomingSessions.map((s) => (
+              <SessionRow key={s.id} session={s} />
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="mt-8">
-        <h2 className="text-sm font-semibold text-muted-foreground">
-          {todaySessions.length > 0 ? "Other recent sessions" : "Recent sessions"}
-        </h2>
+        <h2 className="text-sm font-semibold text-muted-foreground">Past (last 30 days)</h2>
         <div className="mt-2 flex flex-col gap-2">
-          {otherSessions.length > 0 ? (
-            otherSessions.map((s) => <SessionRow key={s.id} session={s} />)
+          {pastSessions.length > 0 ? (
+            pastSessions.map((s) => <SessionRow key={s.id} session={s} />)
           ) : (
-            <p className="text-sm text-muted-foreground">No other sessions in the last 30 days.</p>
+            <p className="text-sm text-muted-foreground">No sessions in the last 30 days.</p>
           )}
         </div>
       </div>

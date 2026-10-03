@@ -84,7 +84,7 @@ test.describe("listRecentSessions", () => {
     expect(results.some((r) => r.id === id)).toBe(false);
   });
 
-  test("includes a future-dated session", async () => {
+  test("includes a future-dated session and marks it isFuture", async () => {
     const id = await createSession(
       "Future Test Session",
       new Date(Date.now() + 5 * 24 * 60 * 60 * 1000)
@@ -92,7 +92,22 @@ test.describe("listRecentSessions", () => {
     sessionIds.push(id);
 
     const results = await listRecentSessions();
-    expect(results.some((r) => r.id === id)).toBe(true);
+    const found = results.find((r) => r.id === id);
+    expect(found).toBeDefined();
+    expect(found!.isFuture).toBe(true);
+  });
+
+  test("marks a past session as not isFuture", async () => {
+    const id = await createSession(
+      "Past Test Session",
+      new Date(Date.now() - 10 * 24 * 60 * 60 * 1000)
+    );
+    sessionIds.push(id);
+
+    const results = await listRecentSessions();
+    const found = results.find((r) => r.id === id);
+    expect(found).toBeDefined();
+    expect(found!.isFuture).toBe(false);
   });
 
   test("reports the correct attendee count, excluding un-ticked attendance", async () => {
