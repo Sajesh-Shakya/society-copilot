@@ -9,7 +9,7 @@ export interface AttendanceRow {
   fullName: string;
   email: string;
   attended: boolean;
-  source: "signup_sync" | "manual_tick" | "walk_in";
+  source: "signup_sync" | "manual_tick" | "walk_in" | "csv_import";
 }
 
 export interface SessionWithAttendance {

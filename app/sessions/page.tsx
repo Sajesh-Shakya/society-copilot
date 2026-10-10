@@ -52,7 +52,10 @@ export default async function SessionsIndexPage() {
             <Link href="/admin/purchases">Purchases</Link>
           </Button>
           <Button asChild variant="outline">
-            <Link href="/sessions/new">New session</Link>
+            <Link href="/sessions/new">New session (eActivities)</Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/sessions/import">New session (CSV import)</Link>
           </Button>
           <SignOutButton />
         </div>

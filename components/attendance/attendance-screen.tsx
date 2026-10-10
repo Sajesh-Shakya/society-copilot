@@ -30,6 +30,7 @@ const SOURCE_LABEL: Record<AttendanceRow["source"], string> = {
   signup_sync: "eActivities",
   manual_tick: "Added",
   walk_in: "Walk-in",
+  csv_import: "CSV import",
 };
 
 export function AttendanceScreen({ session }: { session: SessionWithAttendance }) {
