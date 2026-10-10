@@ -94,6 +94,17 @@ Aaron,Garcia,aaron.garcia25@imperial.ac.uk`;
     expect(result.rows).toHaveLength(1);
   });
 
+  test("reports a duplicate email within the same file, case-insensitively, without importing the second row", () => {
+    const csv = `First Name,Surname,Email
+Aaron,Garcia,Aaron@x.com
+Aaron,Imposter,aaron@x.com`;
+    const result = parseAttendeeCsv(csvBuffer(csv));
+    expect(result.rows).toEqual([
+      { firstName: "Aaron", surname: "Garcia", email: "Aaron@x.com", rawCidOrCardNumber: null },
+    ]);
+    expect(result.rowErrors).toEqual([{ row: 2, message: 'duplicate email "aaron@x.com"' }]);
+  });
+
   test("missing CID/Card Number column entirely is not an error; rawCidOrCardNumber is null", () => {
     const csv = `First Name,Surname,Email
 Aaron,Garcia,aaron.garcia25@imperial.ac.uk`;

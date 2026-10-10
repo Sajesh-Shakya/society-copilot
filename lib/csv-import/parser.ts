@@ -53,15 +53,29 @@ function getField(row: Record<string, unknown>, name: string): string | undefine
  * design doc -- this function itself doesn't enforce that, it just reports.
  */
 export function parseAttendeeCsv(buffer: Buffer): ParseAttendeeCsvResult {
-  const workbook = read(buffer, { type: "buffer" });
+  // raw: true keeps every cell in its original string/raw form instead of
+  // letting xlsx auto-type numeric-looking cells as JS numbers, which would
+  // silently drop leading zeros (e.g. "0123456" -> 123456) and lose
+  // precision on long card numbers. First Name/Surname/Email are already
+  // text, so this doesn't change their parsing.
+  const workbook = read(buffer, { type: "buffer", raw: true });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   const rawRows = utils.sheet_to_json(sheet) as Record<string, unknown>[];
 
   const rows: AttendeeRow[] = [];
   const rowErrors: RowError[] = [];
+  const seenEmails = new Set<string>();
 
-  rawRows.forEach((raw, index) => {
-    const rowNumber = index + 1;
+  rawRows.forEach((raw) => {
+    // xlsx's sheet_to_json() can skip fully-blank rows, so the forEach
+    // index no longer lines up with the row's actual position in the file
+    // once a blank line appears earlier on. __rowNum__ is xlsx's own
+    // 0-indexed-from-the-sheet row number (the header row is row 0, so the
+    // first data row is row 1), which already matches this module's
+    // header-excluded, 1-indexed row-number contract directly -- no
+    // further offset needed -- while still tracking the true row position
+    // across any skipped blank rows.
+    const rowNumber = (raw as { __rowNum__?: number }).__rowNum__ as number;
     const firstName = getField(raw, "First Name");
     const surname = getField(raw, "Surname");
     const email = getField(raw, "Email");
@@ -80,6 +94,13 @@ export function parseAttendeeCsv(buffer: Buffer): ParseAttendeeCsvResult {
       rowErrors.push({ row: rowNumber, message: `invalid email "${email}"` });
       return;
     }
+
+    const normalizedEmail = email!.toLowerCase();
+    if (seenEmails.has(normalizedEmail)) {
+      rowErrors.push({ row: rowNumber, message: `duplicate email "${email}"` });
+      return;
+    }
+    seenEmails.add(normalizedEmail);
 
     rows.push({ firstName: firstName!, surname: surname!, email: email!, rawCidOrCardNumber });
   });

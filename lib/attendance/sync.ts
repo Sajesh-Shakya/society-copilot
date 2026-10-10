@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { EactivitiesProvider } from "@/lib/eactivities/provider";
 import type { Attendee } from "@/lib/eactivities/types";
+import { escapeIlikePattern } from "@/lib/utils";
 
 export class SessionNotBoundError extends Error {
   constructor(sessionId: string) {
@@ -60,7 +61,7 @@ async function findOrCreatePerson(
   const { data: byEmail } = await admin
     .from("person")
     .select("id")
-    .ilike("email", email)
+    .ilike("email", escapeIlikePattern(email))
     .maybeSingle();
   if (byEmail) return { id: byEmail.id, created: false };
 

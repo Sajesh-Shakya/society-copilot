@@ -132,9 +132,11 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
           <Button variant="ghost" size="sm" onClick={() => setShowEmails((v) => !v)}>
             {showEmails ? "Hide emails" : "Show emails"}
           </Button>
-          <Button variant="outline" onClick={handleSync} disabled={isSyncing}>
-            {isSyncing ? "Syncing…" : "Sync now"}
-          </Button>
+          {session.eactivitiesSignupId !== null && (
+            <Button variant="outline" onClick={handleSync} disabled={isSyncing}>
+              {isSyncing ? "Syncing…" : "Sync now"}
+            </Button>
+          )}
           <SignOutButton />
         </div>
       </div>

@@ -38,8 +38,8 @@ export async function createSessionFromCsv(formData: FormData): Promise<CreateSe
   const { rows, rowErrors } = parseAttendeeCsv(buffer);
 
   if (rowErrors.length > 0) {
-    const detail = rowErrors.map((e) => `row ${e.row}: ${e.message}`).join("; ");
-    return { success: false, message: `${rowErrors.length} row(s) failed: ${detail}` };
+    const detail = rowErrors.map((e) => `row ${e.row}: ${e.message}`).join("\n");
+    return { success: false, message: `${rowErrors.length} row(s) failed:\n${detail}` };
   }
   if (rows.length === 0) {
     return { success: false, message: "No attendee rows found in the file." };

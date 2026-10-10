@@ -11,6 +11,7 @@ import { EactivitiesProvider } from "@/lib/eactivities/provider";
 import { syncSessionAttendance } from "@/lib/attendance/sync";
 import { getSessionWithAttendance } from "@/lib/attendance/queries";
 import { requireAdmin } from "@/lib/auth/require-admin";
+import { escapeIlikePattern } from "@/lib/utils";
 
 const provider = new EactivitiesProvider();
 
@@ -88,19 +89,42 @@ export async function toggleAttendance(input: z.infer<typeof toggleSchema>) {
   const admin = createAdminClient();
 
   // Unlike the sync's ON CONFLICT DO NOTHING (never overwrite an existing
-  // tick), this IS the admin's explicit action — DO UPDATE is correct here.
-  // Idempotent per AC-2: toggling to the same value twice is a no-op change.
-  const { error } = await admin.from("attendance_record").upsert(
-    {
+  // tick), this IS the admin's explicit action — a DO UPDATE is correct
+  // here. Idempotent per AC-2: toggling to the same value twice is a no-op
+  // change.
+  //
+  // Supabase-js's .upsert() can't express "don't touch this column on
+  // conflict" -- it always writes every column it's given. Ticking a
+  // csv_import/signup_sync row would therefore unconditionally overwrite
+  // its source to manual_tick, erasing the provenance that's the whole
+  // point of recording a non-manual source. So: look the row up first; an
+  // existing row gets a real UPDATE that only touches attended/
+  // recorded_at (source untouched); only a brand-new row gets source:
+  // "manual_tick".
+  const { data: existing, error: lookupError } = await admin
+    .from("attendance_record")
+    .select("id")
+    .eq("person_id", personId)
+    .eq("session_id", sessionId)
+    .maybeSingle();
+  if (lookupError) throw lookupError;
+
+  if (existing) {
+    const { error } = await admin
+      .from("attendance_record")
+      .update({ attended, recorded_at: new Date().toISOString() })
+      .eq("id", existing.id);
+    if (error) throw error;
+  } else {
+    const { error } = await admin.from("attendance_record").insert({
       person_id: personId,
       session_id: sessionId,
       attended,
       source: "manual_tick",
       recorded_at: new Date().toISOString(),
-    },
-    { onConflict: "person_id,session_id" }
-  );
-  if (error) throw error;
+    });
+    if (error) throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +211,7 @@ export async function createWalkIn(
   const { data: existing, error: existingError } = await admin
     .from("person")
     .select("id")
-    .ilike("email", email)
+    .ilike("email", escapeIlikePattern(email))
     .maybeSingle();
   if (existingError) throw existingError;
 

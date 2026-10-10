@@ -153,15 +153,22 @@ test.describe("importAttendanceCsv", () => {
     personIds.push(record!.person_id);
   });
 
-  test("a duplicate email within the same file produces a clear error, not a raw DB exception", async () => {
+  test("a duplicate email within the same file (bypassing the parser's guard) still throws a comprehensible DB error", async () => {
     const email = `csv-import-dup-${crypto.randomUUID()}@example.test`;
-    // importAttendanceCsv throws the raw Postgres/PostgREST error object (the
-    // same "if (error) throw error" convention lib/attendance/actions.ts
-    // uses), not a `new Error(...)` instance, so Playwright/Jest's
-    // `.rejects.toThrow()` -- which only recognizes a real Error instance --
-    // reports "did not throw" here even though a rejection did occur.
-    // Asserting on the rejected value's `message` property directly matches
-    // what actually gets thrown without changing that production behavior.
+    // The real createSessionFromCsv action path now rejects a duplicate
+    // email at the parser layer (parseAttendeeCsv) before it ever reaches
+    // importAttendanceCsv -- see the "duplicate email" case in
+    // tests/unit/csv-import-parser.spec.ts. But importAttendanceCsv itself
+    // is exported and callable directly (e.g. by a future caller that
+    // builds AttendeeRow[] some other way), and it still has no duplicate
+    // guard of its own, so it still throws the raw Postgres/PostgREST
+    // unique-violation error object (the same "if (error) throw error"
+    // convention lib/attendance/actions.ts uses), not a `new Error(...)`
+    // instance, so Playwright/Jest's `.rejects.toThrow()` -- which only
+    // recognizes a real Error instance -- reports "did not throw" here
+    // even though a rejection did occur. Asserting on the rejected value's
+    // `message` property directly matches what actually gets thrown
+    // without changing that production behavior.
     await expect(
       importAttendanceCsv({
         title: "CSV Import Duplicate Test",

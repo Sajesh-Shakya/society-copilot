@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { escapeIlikePattern } from "@/lib/utils";
 import type { AttendeeRow } from "./parser";
 
 // Mirrors lib/attendance/actions.ts's createSessionFromSignup schema for
@@ -58,7 +59,7 @@ export async function importAttendanceCsv(
     const { data: existing, error: lookupError } = await admin
       .from("person")
       .select("id")
-      .ilike("email", email)
+      .ilike("email", escapeIlikePattern(email))
       .maybeSingle();
     if (lookupError) throw lookupError;
 
