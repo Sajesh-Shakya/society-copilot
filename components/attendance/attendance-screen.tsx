@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -28,12 +27,17 @@ import { AddAttendee } from "@/components/attendance/add-attendee";
 import { AppendCsvButton } from "@/components/attendance/append-csv-button";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 
-const SOURCE_LABEL: Record<AttendanceRow["source"], string> = {
-  signup_sync: "eActivities",
-  manual_tick: "Added",
-  walk_in: "Walk-in",
-  csv_import: "CSV import",
-};
+// Prefer an exact (substring) match on the name; only fall back to
+// typo-tolerant fuzzy matching when nothing matches exactly. A lenient
+// fuzzy match against every name was turning up unrelated people whenever
+// a real, exact match already existed.
+function findMatches(query: string, rows: AttendanceRow[]): AttendanceRow[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const exact = rows.filter((r) => r.fullName.toLowerCase().includes(q));
+  if (exact.length > 0) return exact;
+  return rows.filter((r) => fuzzyMatches(query, r.fullName));
+}
 
 export function AttendanceScreen({ session }: { session: SessionWithAttendance }) {
   const [rows, setRows] = useState<AttendanceRow[]>(session.attendance);
@@ -128,9 +132,8 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
     setRows(fresh);
   }
 
-  const matchCount = search.trim()
-    ? rows.filter((r) => fuzzyMatches(search, r.fullName)).length
-    : 0;
+  const trimmedSearch = search.trim();
+  const searchResults = trimmedSearch ? findMatches(trimmedSearch, rows) : [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -184,11 +187,6 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Find someone on this roster (typo-tolerant)…"
           />
-          {search.trim() && (
-            <p className="text-xs text-muted-foreground">
-              {matchCount === 0 ? "No matches" : `${matchCount} match${matchCount === 1 ? "" : "es"} highlighted below`}
-            </p>
-          )}
         </div>
       )}
 
@@ -196,21 +194,29 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
         <p className="py-8 text-center text-sm text-muted-foreground">
           No one on the roster yet — try syncing, or add someone below.
         </p>
+      ) : trimmedSearch ? (
+        <AttendanceGroup
+          title={`Search results`}
+          rows={searchResults}
+          showEmails={showEmails}
+          onToggle={handleToggle}
+          emptyMessage="No matches."
+        />
       ) : (
         <>
           <AttendanceGroup
             title="Not attended"
             rows={rows.filter((r) => !r.attended)}
             showEmails={showEmails}
-            search={search}
             onToggle={handleToggle}
+            scrollable
           />
           <AttendanceGroup
             title="Attended"
             rows={rows.filter((r) => r.attended)}
             showEmails={showEmails}
-            search={search}
             onToggle={handleToggle}
+            scrollable
           />
         </>
       )}
@@ -231,59 +237,67 @@ function AttendanceGroup({
   title,
   rows,
   showEmails,
-  search,
   onToggle,
+  scrollable = false,
+  emptyMessage = "None.",
 }: {
   title: string;
   rows: AttendanceRow[];
   showEmails: boolean;
-  search: string;
   onToggle: (row: AttendanceRow, attended: boolean) => void;
+  scrollable?: boolean;
+  emptyMessage?: string;
 }) {
+  const table = (
+    <Table>
+      <TableHeader>
+        <TableRow className="border-b-2 border-border">
+          <TableHead className={scrollable ? "sticky top-0 z-10 w-10 bg-background" : "w-10"}></TableHead>
+          <TableHead className={scrollable ? "sticky top-0 z-10 bg-background" : undefined}>
+            Name
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((row) => (
+          <TableRow key={row.personId} className="border-b-2 border-border">
+            <TableCell>
+              <Checkbox
+                checked={row.attended}
+                onCheckedChange={(checked) => onToggle(row, checked === true)}
+                aria-label={`Mark ${row.fullName} ${row.attended ? "not attended" : "attended"}`}
+                className="border-2 border-foreground/60"
+              />
+            </TableCell>
+            <TableCell className={row.attended ? "" : "text-muted-foreground"}>
+              <div>{row.fullName}</div>
+              {showEmails && <div className="text-xs text-muted-foreground">{row.email}</div>}
+            </TableCell>
+          </TableRow>
+        ))}
+        {rows.length === 0 && (
+          <TableRow>
+            <TableCell colSpan={2} className="py-4 text-center text-sm text-muted-foreground">
+              {emptyMessage}
+            </TableCell>
+          </TableRow>
+        )}
+      </TableBody>
+    </Table>
+  );
+
   return (
     <div>
       <h2 className="text-sm font-semibold text-muted-foreground">
         {title} ({rows.length})
       </h2>
-      <Table className="mt-2">
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-10"></TableHead>
-            <TableHead>Name</TableHead>
-            <TableHead>Source</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((row) => {
-            const isMatch = search.trim() !== "" && fuzzyMatches(search, row.fullName);
-            return (
-              <TableRow key={row.personId} className={isMatch ? "bg-yellow-100 dark:bg-yellow-900/30" : undefined}>
-                <TableCell>
-                  <Checkbox
-                    checked={row.attended}
-                    onCheckedChange={(checked) => onToggle(row, checked === true)}
-                    aria-label={`Mark ${row.fullName} ${row.attended ? "not attended" : "attended"}`}
-                  />
-                </TableCell>
-                <TableCell className={row.attended ? "" : "text-muted-foreground"}>
-                  <div>{row.fullName}</div>
-                  {showEmails && <div className="text-xs text-muted-foreground">{row.email}</div>}
-                </TableCell>
-                <TableCell>
-                  <Badge variant="secondary">{SOURCE_LABEL[row.source]}</Badge>
-                </TableCell>
-              </TableRow>
-            );
-          })}
-          {rows.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={3} className="py-4 text-center text-sm text-muted-foreground">
-                None.
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
+      {scrollable ? (
+        <div className="mt-2 max-h-80 overflow-y-auto rounded-md border-2 border-border">
+          {table}
+        </div>
+      ) : (
+        <div className="mt-2">{table}</div>
+      )}
     </div>
   );
 }
