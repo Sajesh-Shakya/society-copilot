@@ -1,6 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { importAttendanceCsv, createSessionFromCsvSchema } from "@/lib/csv-import/importer";
+import {
+  importAttendanceCsv,
+  appendAttendanceCsv,
+  createSessionFromCsvSchema,
+} from "@/lib/csv-import/importer";
 import type { AttendeeRow } from "@/lib/csv-import/parser";
 
 const admin = createAdminClient();
@@ -191,5 +195,117 @@ test.describe("importAttendanceCsv", () => {
         .eq("session_id", s.id);
       for (const r of records ?? []) personIds.push(r.person_id);
     }
+  });
+});
+
+test.describe("appendAttendanceCsv", () => {
+  let sessionIds: string[] = [];
+  let personIds: string[] = [];
+
+  test.afterEach(async () => {
+    if (sessionIds.length > 0) {
+      await admin.from("attendance_record").delete().in("session_id", sessionIds);
+      await admin.from("session").delete().in("id", sessionIds);
+      sessionIds = [];
+    }
+    if (personIds.length > 0) {
+      await admin.from("person").delete().in("id", personIds);
+      personIds = [];
+    }
+  });
+
+  async function newSession(): Promise<string> {
+    const { data, error } = await admin
+      .from("session")
+      .insert({ title: "Append CSV Test Session", starts_at: "2026-10-15T18:00:00.000Z" })
+      .select("id")
+      .single();
+    if (error) throw error;
+    sessionIds.push(data.id);
+    return data.id;
+  }
+
+  test("adds new people to an existing session's roster, source csv_import, attended false", async () => {
+    const sessionId = await newSession();
+    const rows = [row(), row()];
+    const result = await appendAttendanceCsv({ sessionId, rows });
+    expect(result).toEqual({ added: 2, skipped: 0 });
+
+    const { data: records } = await admin
+      .from("attendance_record")
+      .select("source, attended, person_id")
+      .eq("session_id", sessionId);
+    expect(records).toHaveLength(2);
+    for (const record of records!) {
+      expect(record.source).toBe("csv_import");
+      expect(record.attended).toBe(false);
+      personIds.push(record.person_id);
+    }
+  });
+
+  test("skips a row whose person already has an attendance_record for this session, without touching it", async () => {
+    const sessionId = await newSession();
+    const email = `csv-append-existing-${crypto.randomUUID()}@example.test`;
+
+    const { data: person, error: personError } = await admin
+      .from("person")
+      .insert({ full_name: "Already There", email })
+      .select("id")
+      .single();
+    if (personError) throw personError;
+    personIds.push(person.id);
+
+    const { error: recordError } = await admin.from("attendance_record").insert({
+      person_id: person.id,
+      session_id: sessionId,
+      source: "manual_tick",
+      attended: true,
+    });
+    if (recordError) throw recordError;
+
+    const result = await appendAttendanceCsv({
+      sessionId,
+      rows: [row({ email }), row()],
+    });
+    expect(result).toEqual({ added: 1, skipped: 1 });
+
+    // The pre-existing record must be untouched -- still manual_tick/attended:true,
+    // not overwritten to csv_import/attended:false.
+    const { data: existingRecord } = await admin
+      .from("attendance_record")
+      .select("source, attended")
+      .eq("session_id", sessionId)
+      .eq("person_id", person.id)
+      .single();
+    expect(existingRecord!.source).toBe("manual_tick");
+    expect(existingRecord!.attended).toBe(true);
+
+    const { data: allRecords } = await admin
+      .from("attendance_record")
+      .select("person_id")
+      .eq("session_id", sessionId);
+    for (const r of allRecords!) {
+      if (r.person_id !== person.id) personIds.push(r.person_id);
+    }
+  });
+
+  test("reuses an existing person matched by email instead of creating a duplicate", async () => {
+    const sessionId = await newSession();
+    const email = `csv-append-reuse-${crypto.randomUUID()}@example.test`;
+    const { data: existing, error } = await admin
+      .from("person")
+      .insert({ full_name: "Existing Person", email })
+      .select("id")
+      .single();
+    if (error) throw error;
+    personIds.push(existing.id);
+
+    await appendAttendanceCsv({ sessionId, rows: [row({ email })] });
+
+    const { count: personCount } = await admin
+      .from("person")
+      .select("id", { count: "exact", head: true })
+      .ilike("email", email);
+    expect(personCount).toBe(1);
   });
 });

@@ -128,6 +128,32 @@ export async function toggleAttendance(input: z.infer<typeof toggleSchema>) {
 }
 
 // ---------------------------------------------------------------------------
+// Session cancellation (soft delete) — cancelling an event (e.g. the club
+// calls off Wednesday's session) sets a flag rather than deleting the row,
+// so any roster/attendance already attached to it is never lost. Toggled
+// rather than one-way so an accidental cancel is reversible.
+// ---------------------------------------------------------------------------
+
+const setSessionCancelledSchema = z.object({
+  sessionId: z.string().uuid(),
+  cancelled: z.boolean(),
+});
+
+export async function setSessionCancelled(
+  input: z.infer<typeof setSessionCancelledSchema>
+) {
+  await requireAdmin();
+  const { sessionId, cancelled } = setSessionCancelledSchema.parse(input);
+  const admin = createAdminClient();
+
+  const { error } = await admin
+    .from("session")
+    .update({ cancelled_at: cancelled ? new Date().toISOString() : null })
+    .eq("id", sessionId);
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------------
 // 3.4 — fuzzy name search (AC-4)
 // ---------------------------------------------------------------------------
 

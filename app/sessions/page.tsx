@@ -106,7 +106,13 @@ export default async function SessionsIndexPage() {
 function SessionRow({
   session,
 }: {
-  session: { id: string; title: string; startsAt: string; attendeeCount: number };
+  session: {
+    id: string;
+    title: string;
+    startsAt: string;
+    attendeeCount: number;
+    cancelledAt: string | null;
+  };
 }) {
   return (
     <Link
@@ -114,12 +120,17 @@ function SessionRow({
       className="flex flex-col gap-2 rounded-lg border p-4 hover:bg-muted sm:flex-row sm:items-center sm:justify-between sm:gap-4"
     >
       <div>
-        <p className="font-medium">{session.title}</p>
+        <p className={`font-medium ${session.cancelledAt ? "line-through text-muted-foreground" : ""}`}>
+          {session.title}
+        </p>
         <p className="text-xs text-muted-foreground">{new Date(session.startsAt).toLocaleString()}</p>
       </div>
-      <Badge variant="secondary" className="self-start sm:self-auto">
-        {session.attendeeCount} attendee{session.attendeeCount === 1 ? "" : "s"}
-      </Badge>
+      <div className="flex items-center gap-2 self-start sm:self-auto">
+        {session.cancelledAt && <Badge variant="destructive">Cancelled</Badge>}
+        <Badge variant="secondary">
+          {session.attendeeCount} attendee{session.attendeeCount === 1 ? "" : "s"}
+        </Badge>
+      </div>
     </Link>
   );
 }

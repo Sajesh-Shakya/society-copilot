@@ -22,6 +22,38 @@ export interface ImportAttendanceCsvResult {
   imported: number;
 }
 
+type AdminClient = ReturnType<typeof createAdminClient>;
+
+/**
+ * Matches a CSV row to an existing person by email (case-insensitive,
+ * wildcard-escaped -- see lib/utils.ts's escapeIlikePattern), creating one
+ * if none exists. Shared by both the create-new-session and append-to-
+ * existing-session import paths so they match/create people identically.
+ */
+async function findOrCreatePersonByEmail(admin: AdminClient, row: AttendeeRow): Promise<string> {
+  const email = row.email.toLowerCase();
+  const { data: existing, error: lookupError } = await admin
+    .from("person")
+    .select("id")
+    .ilike("email", escapeIlikePattern(email))
+    .maybeSingle();
+  if (lookupError) throw lookupError;
+
+  if (existing) return existing.id;
+
+  const { data: created, error: personError } = await admin
+    .from("person")
+    .insert({
+      email: row.email,
+      full_name: `${row.firstName} ${row.surname}`.trim(),
+      identity_confidence: "confirmed",
+    })
+    .select("id")
+    .single();
+  if (personError) throw personError;
+  return created.id;
+}
+
 /**
  * Pure DB-writing logic for the CSV-import fail-safe (see the 2026-10-09
  * design doc) -- no requireAdmin() call here, deliberately, so integration
@@ -55,30 +87,7 @@ export async function importAttendanceCsv(
   if (sessionError) throw sessionError;
 
   for (const row of input.rows) {
-    const email = row.email.toLowerCase();
-    const { data: existing, error: lookupError } = await admin
-      .from("person")
-      .select("id")
-      .ilike("email", escapeIlikePattern(email))
-      .maybeSingle();
-    if (lookupError) throw lookupError;
-
-    let personId: string;
-    if (existing) {
-      personId = existing.id;
-    } else {
-      const { data: created, error: personError } = await admin
-        .from("person")
-        .insert({
-          email: row.email,
-          full_name: `${row.firstName} ${row.surname}`.trim(),
-          identity_confidence: "confirmed",
-        })
-        .select("id")
-        .single();
-      if (personError) throw personError;
-      personId = created.id;
-    }
+    const personId = await findOrCreatePersonByEmail(admin, row);
 
     const { error: attendanceError } = await admin.from("attendance_record").insert({
       person_id: personId,
@@ -91,4 +100,54 @@ export async function importAttendanceCsv(
   }
 
   return { sessionId: session.id, imported: input.rows.length };
+}
+
+export interface AppendAttendanceCsvInput {
+  sessionId: string;
+  rows: AttendeeRow[];
+}
+
+export interface AppendAttendanceCsvResult {
+  added: number;
+  skipped: number;
+}
+
+/**
+ * Appends CSV rows to an EXISTING session's roster -- for new people who
+ * sign up after the session was first created/imported. Unlike
+ * importAttendanceCsv, a row whose person already has an attendance_record
+ * for this session is silently skipped rather than erroring or overwriting
+ * -- re-uploading the same (or an overlapping) file must never reset
+ * someone who's already been ticked, or stomp on their recorded source.
+ * Mirrors the live-sync path's ON CONFLICT DO NOTHING semantics (see
+ * lib/attendance/sync.ts).
+ *
+ * No requireAdmin() here either, for the same testability reason as
+ * importAttendanceCsv above.
+ */
+export async function appendAttendanceCsv(
+  input: AppendAttendanceCsvInput
+): Promise<AppendAttendanceCsvResult> {
+  const admin = createAdminClient();
+
+  const records = [];
+  for (const row of input.rows) {
+    const personId = await findOrCreatePersonByEmail(admin, row);
+    records.push({
+      person_id: personId,
+      session_id: input.sessionId,
+      source: "csv_import" as const,
+      attended: false,
+      raw_cid_or_card_number: row.rawCidOrCardNumber,
+    });
+  }
+
+  const { data, error } = await admin
+    .from("attendance_record")
+    .upsert(records, { onConflict: "person_id,session_id", ignoreDuplicates: true })
+    .select("id");
+  if (error) throw error;
+
+  const added = data?.length ?? 0;
+  return { added, skipped: input.rows.length - added };
 }

@@ -20,10 +20,12 @@ import {
   toggleAttendance,
   triggerManualSync,
   getAttendanceList,
+  setSessionCancelled,
 } from "@/lib/attendance/actions";
 import { fuzzyMatches } from "@/lib/attendance/fuzzy-match";
 import type { AttendanceRow, SessionWithAttendance } from "@/lib/attendance/queries";
 import { AddAttendee } from "@/components/attendance/add-attendee";
+import { AppendCsvButton } from "@/components/attendance/append-csv-button";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 
 const SOURCE_LABEL: Record<AttendanceRow["source"], string> = {
@@ -38,6 +40,8 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
   const [isSyncing, startSync] = useTransition();
   const [showEmails, setShowEmails] = useState(false);
   const [search, setSearch] = useState("");
+  const [cancelledAt, setCancelledAt] = useState<string | null>(session.cancelledAt);
+  const [isTogglingCancel, startCancelToggle] = useTransition();
 
   // AC-3: propagate toggle changes to every open attendance screen for this
   // session within 2s. UPDATE payloads carry attended directly, so patch
@@ -106,6 +110,24 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
     });
   }
 
+  function handleToggleCancel() {
+    const next = !cancelledAt;
+    startCancelToggle(async () => {
+      try {
+        await setSessionCancelled({ sessionId: session.id, cancelled: next });
+        setCancelledAt(next ? new Date().toISOString() : null);
+        toast.success(next ? "Session cancelled" : "Session un-cancelled");
+      } catch {
+        toast.error("Couldn't update cancellation status");
+      }
+    });
+  }
+
+  async function refetchRows() {
+    const fresh = await getAttendanceList(session.id);
+    setRows(fresh);
+  }
+
   const matchCount = search.trim()
     ? rows.filter((r) => fuzzyMatches(search, r.fullName)).length
     : 0;
@@ -117,6 +139,12 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
           ← All sessions
         </Link>
       </div>
+
+      {cancelledAt && (
+        <div className="rounded-md border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+          This session is cancelled.
+        </div>
+      )}
 
       <div className="flex flex-col items-start gap-4 sm:flex-row sm:justify-between">
         <div>
@@ -137,6 +165,14 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
               {isSyncing ? "Syncing…" : "Sync now"}
             </Button>
           )}
+          <Button
+            variant={cancelledAt ? "outline" : "destructive"}
+            size="sm"
+            onClick={handleToggleCancel}
+            disabled={isTogglingCancel}
+          >
+            {cancelledAt ? "Un-cancel session" : "Cancel session"}
+          </Button>
           <SignOutButton />
         </div>
       </div>
@@ -179,11 +215,14 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
         </>
       )}
 
-      <AddAttendee
-        sessionId={session.id}
-        existingPersonIds={rows.map((r) => r.personId)}
-        onAdded={(row) => setRows((prev) => [...prev, row].sort((a, b) => a.fullName.localeCompare(b.fullName)))}
-      />
+      <div className="flex flex-wrap items-center gap-2">
+        <AddAttendee
+          sessionId={session.id}
+          existingPersonIds={rows.map((r) => r.personId)}
+          onAdded={(row) => setRows((prev) => [...prev, row].sort((a, b) => a.fullName.localeCompare(b.fullName)))}
+        />
+        <AppendCsvButton sessionId={session.id} onImported={refetchRows} />
+      </div>
     </div>
   );
 }

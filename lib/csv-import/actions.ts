@@ -1,8 +1,13 @@
 "use server";
 
+import { z } from "zod";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { parseAttendeeCsv, isCsvFile } from "./parser";
-import { createSessionFromCsvSchema, importAttendanceCsv } from "./importer";
+import {
+  createSessionFromCsvSchema,
+  importAttendanceCsv,
+  appendAttendanceCsv,
+} from "./importer";
 
 export interface CreateSessionFromCsvResult {
   success: boolean;
@@ -62,6 +67,65 @@ export async function createSessionFromCsv(formData: FormData): Promise<CreateSe
       success: false,
       message:
         "Import failed partway through — check /sessions for a possibly-incomplete session before retrying.",
+    };
+  }
+}
+
+export interface AppendCsvToSessionResult {
+  success: boolean;
+  message: string;
+}
+
+const sessionIdSchema = z.string().uuid();
+
+/**
+ * Adds new people to an EXISTING session's roster from a CSV export (e.g.
+ * someone signs up after the session was first created/imported). Rows
+ * whose person already has an attendance_record for this session are
+ * silently skipped (see appendAttendanceCsv) -- never overwritten.
+ */
+export async function appendCsvToSession(
+  sessionId: string,
+  formData: FormData
+): Promise<AppendCsvToSessionResult> {
+  await requireAdmin();
+
+  const parsedSessionId = sessionIdSchema.safeParse(sessionId);
+  if (!parsedSessionId.success) {
+    return { success: false, message: "Invalid session." };
+  }
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { success: false, message: "No file provided." };
+  }
+  if (!isCsvFile(file.name)) {
+    return { success: false, message: "File must be .csv format." };
+  }
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const { rows, rowErrors } = parseAttendeeCsv(buffer);
+
+  if (rowErrors.length > 0) {
+    const detail = rowErrors.map((e) => `row ${e.row}: ${e.message}`).join("\n");
+    return { success: false, message: `${rowErrors.length} row(s) failed:\n${detail}` };
+  }
+  if (rows.length === 0) {
+    return { success: false, message: "No attendee rows found in the file." };
+  }
+
+  try {
+    const result = await appendAttendanceCsv({ sessionId: parsedSessionId.data, rows });
+    const skippedNote = result.skipped > 0 ? ` (${result.skipped} already on the roster)` : "";
+    return {
+      success: true,
+      message: `Added ${result.added} attendee(s)${skippedNote}.`,
+    };
+  } catch (error) {
+    console.error("appendCsvToSession: append failed partway through:", error);
+    return {
+      success: false,
+      message: "Import failed partway through — some rows may have been added. Check the roster before retrying.",
     };
   }
 }

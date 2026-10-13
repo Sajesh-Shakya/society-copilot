@@ -18,6 +18,7 @@ export interface SessionWithAttendance {
   startsAt: string;
   eactivitiesSignupId: string | null;
   lastSyncedAt: string | null;
+  cancelledAt: string | null;
   attendance: AttendanceRow[];
 }
 
@@ -33,7 +34,7 @@ export async function getSessionWithAttendance(
 
   const { data: session, error: sessionError } = await admin
     .from("session")
-    .select("id, title, starts_at, eactivities_signup_id, last_synced_at")
+    .select("id, title, starts_at, eactivities_signup_id, last_synced_at, cancelled_at")
     .eq("id", sessionId)
     .maybeSingle();
   if (sessionError) throw sessionError;
@@ -67,6 +68,7 @@ export async function getSessionWithAttendance(
     startsAt: session.starts_at,
     eactivitiesSignupId: session.eactivities_signup_id,
     lastSyncedAt: session.last_synced_at,
+    cancelledAt: session.cancelled_at,
     attendance,
   };
 }
@@ -78,6 +80,7 @@ export interface SessionListItem {
   attendeeCount: number;
   isToday: boolean;
   isFuture: boolean;
+  cancelledAt: string | null;
 }
 
 function isUtcToday(iso: string): boolean {
@@ -102,7 +105,7 @@ export async function listRecentSessions(): Promise<SessionListItem[]> {
 
   const { data: sessions, error: sessionsError } = await admin
     .from("session")
-    .select("id, title, starts_at")
+    .select("id, title, starts_at, cancelled_at")
     .gte("starts_at", thirtyDaysAgo)
     .order("starts_at", { ascending: false });
   if (sessionsError) throw sessionsError;
@@ -139,5 +142,6 @@ export async function listRecentSessions(): Promise<SessionListItem[]> {
     attendeeCount: countsBySessionId.get(s.id) ?? 0,
     isToday: isUtcToday(s.starts_at),
     isFuture: new Date(s.starts_at).getTime() > Date.now(),
+    cancelledAt: s.cancelled_at,
   }));
 }
