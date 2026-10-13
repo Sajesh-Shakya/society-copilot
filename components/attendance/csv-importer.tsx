@@ -12,6 +12,7 @@ export function CsvImporter() {
   const router = useRouter();
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
@@ -59,15 +60,34 @@ export function CsvImporter() {
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="file">Attendee CSV (exported from eActivities&apos; dashboard)</Label>
+        {/* A bare <input type="file"> renders as a tiny, easy-to-miss
+            browser-default control -- hidden here in favor of a real
+            Button that triggers it, matching append-csv-button.tsx's
+            pattern. Not `required`: the browser can't show its native
+            validation bubble against a hidden element, which would
+            silently block submission with no visible feedback -- the
+            file is validated explicitly in handleSubmit instead. */}
         <input
           ref={fileInputRef}
           id="file"
           name="file"
           type="file"
           accept=".csv"
-          required
-          className="text-sm"
+          className="hidden"
+          onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
         />
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Choose CSV file
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            {fileName ?? "No file chosen"}
+          </span>
+        </div>
       </div>
       <Button type="submit" disabled={isPending} className="self-start">
         {isPending ? "Importing…" : "Create session"}
