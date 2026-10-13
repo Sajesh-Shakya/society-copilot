@@ -1,0 +1,11 @@
+-- Enable Supabase Realtime for attendance_record so the attendance screen's
+-- existing postgres_changes subscription (components/attendance/attendance-screen.tsx)
+-- actually receives live updates. The subscription code has existed since
+-- the original attendance feature but the table was never added to the
+-- supabase_realtime publication, so it silently did nothing until now.
+--
+-- Realtime respects the table's RLS SELECT policy
+-- (attendance_record_select_authenticated_admin) when deciding what to
+-- broadcast to a given subscriber, so this is safe to enable without
+-- loosening any access control.
+alter publication supabase_realtime add table public.attendance_record;
