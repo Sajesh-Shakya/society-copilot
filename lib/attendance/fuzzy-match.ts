@@ -28,9 +28,23 @@ export function fuzzyMatches(query: string, target: string): boolean {
   const name = target.toLowerCase();
   if (name.includes(q)) return true;
 
-  const maxDistance = q.length <= 4 ? 1 : 2;
   return name.split(/\s+/).some((word) => {
     if (word.includes(q) || q.includes(word)) return true;
-    return levenshtein(q, word) <= maxDistance;
+
+    // A flat distance cap (e.g. "always <=2") unfairly rejects longer
+    // names with a couple of typos, so scale the allowance with length
+    // instead: roughly 2 in 5 characters may differ.
+    const maxDistance = Math.max(1, Math.ceil(Math.min(q.length, word.length) * 0.4));
+
+    // Comparing the query against the *whole* word also fails while
+    // someone is still mid-type: "jay" vs "jiehao" scores a distance of 4
+    // just from the length gap, long before the user finishes typing the
+    // name correctly. Comparing against the same-length prefix of the
+    // word avoids penalizing letters the user hasn't typed yet, so a
+    // genuine typo-in-progress ("jay" -> "jayhao" for "Jiehao") still
+    // matches at every step, not only once fully typed.
+    const prefixDistance = levenshtein(q, word.slice(0, q.length));
+
+    return levenshtein(q, word) <= maxDistance || prefixDistance <= maxDistance;
   });
 }
