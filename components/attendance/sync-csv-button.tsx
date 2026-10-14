@@ -3,22 +3,25 @@
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { appendCsvToSession } from "@/lib/csv-import/actions";
+import { syncCsvToSession } from "@/lib/csv-import/actions";
 
 /**
- * Adds new people to an already-created session's roster from a CSV export
- * -- for when someone signs up after the session was first created/
- * imported. No title/start-time fields needed (the session already has
- * those); just a file picker. Triggers a full attendance-list refetch via
- * onImported rather than trying to merge rows locally, since the server
- * action doesn't return which specific rows were added vs skipped.
+ * Re-syncs an already-created session's roster against a freshly
+ * re-exported CSV -- the new file is treated as authoritative for who's
+ * currently signed up, so this can both add new signups and remove
+ * people who've since un-signed-up (see syncAttendanceCsv for the exact
+ * rules; manually-added people and anyone already marked attended are
+ * never removed). No title/start-time fields needed (the session already
+ * has those); just a file picker. Triggers a full attendance-list
+ * refetch via onSynced rather than trying to merge rows locally, since
+ * the server action doesn't return which specific rows changed.
  */
-export function AppendCsvButton({
+export function SyncCsvButton({
   sessionId,
-  onImported,
+  onSynced,
 }: {
   sessionId: string;
-  onImported: () => void;
+  onSynced: () => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isPending, setIsPending] = useState(false);
@@ -31,16 +34,16 @@ export function AppendCsvButton({
     formData.set("file", file);
 
     setIsPending(true);
-    appendCsvToSession(sessionId, formData)
+    syncCsvToSession(sessionId, formData)
       .then((result) => {
         if (result.success) {
           toast.success(result.message);
-          onImported();
+          onSynced();
         } else {
           toast.error(result.message);
         }
       })
-      .catch(() => toast.error("Import failed unexpectedly."))
+      .catch(() => toast.error("Sync failed unexpectedly."))
       .finally(() => {
         setIsPending(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
@@ -62,7 +65,7 @@ export function AppendCsvButton({
         disabled={isPending}
         onClick={() => fileInputRef.current?.click()}
       >
-        {isPending ? "Importing…" : "New people from CSV"}
+        {isPending ? "Syncing…" : "Update from CSV"}
       </Button>
     </>
   );

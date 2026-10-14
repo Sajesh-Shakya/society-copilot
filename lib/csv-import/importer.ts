@@ -102,32 +102,45 @@ export async function importAttendanceCsv(
   return { sessionId: session.id, imported: input.rows.length };
 }
 
-export interface AppendAttendanceCsvInput {
+export interface SyncAttendanceCsvInput {
   sessionId: string;
   rows: AttendeeRow[];
 }
 
-export interface AppendAttendanceCsvResult {
+export interface SyncAttendanceCsvResult {
   added: number;
   skipped: number;
+  removed: number;
 }
 
 /**
- * Appends CSV rows to an EXISTING session's roster -- for new people who
- * sign up after the session was first created/imported. Unlike
- * importAttendanceCsv, a row whose person already has an attendance_record
- * for this session is silently skipped rather than erroring or overwriting
- * -- re-uploading the same (or an overlapping) file must never reset
- * someone who's already been ticked, or stomp on their recorded source.
- * Mirrors the live-sync path's ON CONFLICT DO NOTHING semantics (see
- * lib/attendance/sync.ts).
+ * Re-syncs an EXISTING session's roster against a freshly re-exported CSV
+ * -- eActivities' signup list is live, so someone who signed up when the
+ * session was first imported may have un-signed-up by the time of a later
+ * export. The new file is treated as authoritative for who's currently
+ * signed up:
+ *
+ * - A row not already on the roster is added (source: 'csv_import',
+ *   attended: false), same as importAttendanceCsv.
+ * - A row already on the roster is left untouched (no re-insert, no
+ *   overwrite -- mirrors the live-sync path's ON CONFLICT DO NOTHING
+ *   semantics, see lib/attendance/sync.ts).
+ * - An existing attendance_record is removed ONLY if it came from a
+ *   previous CSV import (source: 'csv_import'), the person is NOT in this
+ *   new file, AND they haven't been marked attended yet. This is
+ *   deliberately narrow: a `manual_tick`/`walk_in` row is never removed
+ *   (that person was never on any signup list, so their absence from one
+ *   export says nothing about them), and an already-attended csv_import
+ *   row is never removed either (real recorded attendance outranks a
+ *   stale export -- see the design doc's "blank Attended column means
+ *   unknown, not attended" decision this mirrors).
  *
  * No requireAdmin() here either, for the same testability reason as
  * importAttendanceCsv above.
  */
-export async function appendAttendanceCsv(
-  input: AppendAttendanceCsvInput
-): Promise<AppendAttendanceCsvResult> {
+export async function syncAttendanceCsv(
+  input: SyncAttendanceCsvInput
+): Promise<SyncAttendanceCsvResult> {
   const admin = createAdminClient();
 
   const records = [];
@@ -142,12 +155,41 @@ export async function appendAttendanceCsv(
     });
   }
 
-  const { data, error } = await admin
+  const { data: upserted, error: upsertError } = await admin
     .from("attendance_record")
     .upsert(records, { onConflict: "person_id,session_id", ignoreDuplicates: true })
     .select("id");
-  if (error) throw error;
+  if (upsertError) throw upsertError;
+  const added = upserted?.length ?? 0;
 
-  const added = data?.length ?? 0;
-  return { added, skipped: input.rows.length - added };
+  const newEmails = new Set(input.rows.map((row) => row.email.toLowerCase()));
+
+  const { data: existingCsvRows, error: existingError } = await admin
+    .from("attendance_record")
+    .select("id, person:person_id(email)")
+    .eq("session_id", input.sessionId)
+    .eq("source", "csv_import")
+    .eq("attended", false);
+  if (existingError) throw existingError;
+
+  const idsToRemove = (existingCsvRows ?? [])
+    .filter((record) => {
+      // supabase-js types a to-one FK select as an array; it's always
+      // exactly one row here since person_id is not-null with a FK.
+      const person = Array.isArray(record.person) ? record.person[0] : record.person;
+      return !newEmails.has(person.email.toLowerCase());
+    })
+    .map((record) => record.id);
+
+  let removed = 0;
+  if (idsToRemove.length > 0) {
+    const { error: deleteError, count } = await admin
+      .from("attendance_record")
+      .delete({ count: "exact" })
+      .in("id", idsToRemove);
+    if (deleteError) throw deleteError;
+    removed = count ?? idsToRemove.length;
+  }
+
+  return { added, skipped: input.rows.length - added, removed };
 }

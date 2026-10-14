@@ -24,7 +24,7 @@ import {
 import { fuzzyMatches } from "@/lib/attendance/fuzzy-match";
 import type { AttendanceRow, SessionWithAttendance } from "@/lib/attendance/queries";
 import { AddAttendee } from "@/components/attendance/add-attendee";
-import { AppendCsvButton } from "@/components/attendance/append-csv-button";
+import { SyncCsvButton } from "@/components/attendance/sync-csv-button";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 
 // Prefer an exact (substring) match on the name; only fall back to
@@ -227,7 +227,7 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
           existingPersonIds={rows.map((r) => r.personId)}
           onAdded={(row) => setRows((prev) => [...prev, row].sort((a, b) => a.fullName.localeCompare(b.fullName)))}
         />
-        <AppendCsvButton sessionId={session.id} onImported={refetchRows} />
+        <SyncCsvButton sessionId={session.id} onSynced={refetchRows} />
       </div>
     </div>
   );

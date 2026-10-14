@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   importAttendanceCsv,
-  appendAttendanceCsv,
+  syncAttendanceCsv,
   createSessionFromCsvSchema,
 } from "@/lib/csv-import/importer";
 import type { AttendeeRow } from "@/lib/csv-import/parser";
@@ -198,7 +198,7 @@ test.describe("importAttendanceCsv", () => {
   });
 });
 
-test.describe("appendAttendanceCsv", () => {
+test.describe("syncAttendanceCsv", () => {
   let sessionIds: string[] = [];
   let personIds: string[] = [];
 
@@ -217,7 +217,7 @@ test.describe("appendAttendanceCsv", () => {
   async function newSession(): Promise<string> {
     const { data, error } = await admin
       .from("session")
-      .insert({ title: "Append CSV Test Session", starts_at: "2026-10-15T18:00:00.000Z" })
+      .insert({ title: "Sync CSV Test Session", starts_at: "2026-10-15T18:00:00.000Z" })
       .select("id")
       .single();
     if (error) throw error;
@@ -228,8 +228,8 @@ test.describe("appendAttendanceCsv", () => {
   test("adds new people to an existing session's roster, source csv_import, attended false", async () => {
     const sessionId = await newSession();
     const rows = [row(), row()];
-    const result = await appendAttendanceCsv({ sessionId, rows });
-    expect(result).toEqual({ added: 2, skipped: 0 });
+    const result = await syncAttendanceCsv({ sessionId, rows });
+    expect(result).toEqual({ added: 2, skipped: 0, removed: 0 });
 
     const { data: records } = await admin
       .from("attendance_record")
@@ -245,7 +245,7 @@ test.describe("appendAttendanceCsv", () => {
 
   test("skips a row whose person already has an attendance_record for this session, without touching it", async () => {
     const sessionId = await newSession();
-    const email = `csv-append-existing-${crypto.randomUUID()}@example.test`;
+    const email = `csv-sync-existing-${crypto.randomUUID()}@example.test`;
 
     const { data: person, error: personError } = await admin
       .from("person")
@@ -263,11 +263,11 @@ test.describe("appendAttendanceCsv", () => {
     });
     if (recordError) throw recordError;
 
-    const result = await appendAttendanceCsv({
+    const result = await syncAttendanceCsv({
       sessionId,
       rows: [row({ email }), row()],
     });
-    expect(result).toEqual({ added: 1, skipped: 1 });
+    expect(result).toEqual({ added: 1, skipped: 1, removed: 0 });
 
     // The pre-existing record must be untouched -- still manual_tick/attended:true,
     // not overwritten to csv_import/attended:false.
@@ -291,7 +291,7 @@ test.describe("appendAttendanceCsv", () => {
 
   test("reuses an existing person matched by email instead of creating a duplicate", async () => {
     const sessionId = await newSession();
-    const email = `csv-append-reuse-${crypto.randomUUID()}@example.test`;
+    const email = `csv-sync-reuse-${crypto.randomUUID()}@example.test`;
     const { data: existing, error } = await admin
       .from("person")
       .insert({ full_name: "Existing Person", email })
@@ -300,12 +300,134 @@ test.describe("appendAttendanceCsv", () => {
     if (error) throw error;
     personIds.push(existing.id);
 
-    await appendAttendanceCsv({ sessionId, rows: [row({ email })] });
+    await syncAttendanceCsv({ sessionId, rows: [row({ email })] });
 
     const { count: personCount } = await admin
       .from("person")
       .select("id", { count: "exact", head: true })
       .ilike("email", email);
     expect(personCount).toBe(1);
+  });
+
+  test("removes a not-yet-attended csv_import row whose person has dropped off the new list", async () => {
+    const sessionId = await newSession();
+    const stayingEmail = `csv-sync-staying-${crypto.randomUUID()}@example.test`;
+    const leavingEmail = `csv-sync-leaving-${crypto.randomUUID()}@example.test`;
+
+    // First upload: both sign up.
+    const first = await syncAttendanceCsv({
+      sessionId,
+      rows: [row({ email: stayingEmail }), row({ email: leavingEmail })],
+    });
+    expect(first).toEqual({ added: 2, skipped: 0, removed: 0 });
+
+    const { data: staying } = await admin
+      .from("person")
+      .select("id")
+      .ilike("email", stayingEmail)
+      .single();
+    const { data: leaving } = await admin
+      .from("person")
+      .select("id")
+      .ilike("email", leavingEmail)
+      .single();
+    personIds.push(staying!.id, leaving!.id);
+
+    // Second upload: only the staying person is still signed up.
+    const second = await syncAttendanceCsv({
+      sessionId,
+      rows: [row({ email: stayingEmail })],
+    });
+    expect(second).toEqual({ added: 0, skipped: 1, removed: 1 });
+
+    const { data: remaining } = await admin
+      .from("attendance_record")
+      .select("person_id")
+      .eq("session_id", sessionId);
+    expect(remaining!.map((r) => r.person_id)).toEqual([staying!.id]);
+  });
+
+  test("never removes a manual_tick or walk_in row, even if absent from the new upload", async () => {
+    const sessionId = await newSession();
+    const manualEmail = `csv-sync-manual-${crypto.randomUUID()}@example.test`;
+    const walkInEmail = `csv-sync-walkin-${crypto.randomUUID()}@example.test`;
+
+    const { data: manualPerson, error: manualError } = await admin
+      .from("person")
+      .insert({ full_name: "Manually Added", email: manualEmail })
+      .select("id")
+      .single();
+    if (manualError) throw manualError;
+    personIds.push(manualPerson.id);
+    await admin.from("attendance_record").insert({
+      person_id: manualPerson.id,
+      session_id: sessionId,
+      source: "manual_tick",
+      attended: false,
+    });
+
+    const { data: walkInPerson, error: walkInError } = await admin
+      .from("person")
+      .insert({ full_name: "Walk In", email: walkInEmail })
+      .select("id")
+      .single();
+    if (walkInError) throw walkInError;
+    personIds.push(walkInPerson.id);
+    await admin.from("attendance_record").insert({
+      person_id: walkInPerson.id,
+      session_id: sessionId,
+      source: "walk_in",
+      attended: true,
+    });
+
+    // Upload a CSV that mentions neither of them.
+    const result = await syncAttendanceCsv({ sessionId, rows: [row()] });
+    expect(result.removed).toBe(0);
+    personIds.push(
+      ...(
+        await admin.from("attendance_record").select("person_id").eq("session_id", sessionId)
+      ).data!.map((r) => r.person_id).filter((id) => id !== manualPerson.id && id !== walkInPerson.id)
+    );
+
+    const { data: stillThere } = await admin
+      .from("attendance_record")
+      .select("person_id, source")
+      .eq("session_id", sessionId)
+      .in("person_id", [manualPerson.id, walkInPerson.id]);
+    expect(stillThere).toHaveLength(2);
+  });
+
+  test("never removes an already-attended csv_import row, even if absent from the new upload", async () => {
+    const sessionId = await newSession();
+    const email = `csv-sync-attended-${crypto.randomUUID()}@example.test`;
+
+    const { data: person, error: personError } = await admin
+      .from("person")
+      .insert({ full_name: "Already Attended", email })
+      .select("id")
+      .single();
+    if (personError) throw personError;
+    personIds.push(person.id);
+    await admin.from("attendance_record").insert({
+      person_id: person.id,
+      session_id: sessionId,
+      source: "csv_import",
+      attended: true,
+    });
+
+    const result = await syncAttendanceCsv({ sessionId, rows: [row()] });
+    expect(result.removed).toBe(0);
+    personIds.push(
+      ...(
+        await admin.from("attendance_record").select("person_id").eq("session_id", sessionId)
+      ).data!.map((r) => r.person_id).filter((id) => id !== person.id)
+    );
+
+    const { data: stillThere } = await admin
+      .from("attendance_record")
+      .select("id")
+      .eq("session_id", sessionId)
+      .eq("person_id", person.id);
+    expect(stillThere).toHaveLength(1);
   });
 });

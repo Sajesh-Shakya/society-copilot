@@ -6,7 +6,7 @@ import { parseAttendeeCsv, isCsvFile } from "./parser";
 import {
   createSessionFromCsvSchema,
   importAttendanceCsv,
-  appendAttendanceCsv,
+  syncAttendanceCsv,
 } from "./importer";
 
 export interface CreateSessionFromCsvResult {
@@ -71,7 +71,7 @@ export async function createSessionFromCsv(formData: FormData): Promise<CreateSe
   }
 }
 
-export interface AppendCsvToSessionResult {
+export interface SyncCsvToSessionResult {
   success: boolean;
   message: string;
 }
@@ -79,15 +79,19 @@ export interface AppendCsvToSessionResult {
 const sessionIdSchema = z.string().uuid();
 
 /**
- * Adds new people to an EXISTING session's roster from a CSV export (e.g.
- * someone signs up after the session was first created/imported). Rows
- * whose person already has an attendance_record for this session are
- * silently skipped (see appendAttendanceCsv) -- never overwritten.
+ * Re-syncs an EXISTING session's roster against a freshly re-exported CSV
+ * -- the new file is treated as the current source of truth for who's
+ * signed up (someone may have un-signed-up since the last export). See
+ * syncAttendanceCsv for the exact add/skip/remove rules -- in short: new
+ * people are added, people already on the roster are left alone, and a
+ * not-yet-attended csv_import row whose person has dropped off the new
+ * list is removed; a manually-added (manual_tick/walk_in) row or anyone
+ * already marked attended is never removed.
  */
-export async function appendCsvToSession(
+export async function syncCsvToSession(
   sessionId: string,
   formData: FormData
-): Promise<AppendCsvToSessionResult> {
+): Promise<SyncCsvToSessionResult> {
   await requireAdmin();
 
   const parsedSessionId = sessionIdSchema.safeParse(sessionId);
@@ -115,17 +119,19 @@ export async function appendCsvToSession(
   }
 
   try {
-    const result = await appendAttendanceCsv({ sessionId: parsedSessionId.data, rows });
-    const skippedNote = result.skipped > 0 ? ` (${result.skipped} already on the roster)` : "";
+    const result = await syncAttendanceCsv({ sessionId: parsedSessionId.data, rows });
+    const parts = [`${result.added} added`];
+    if (result.removed > 0) parts.push(`${result.removed} removed (no longer signed up)`);
+    if (result.skipped > 0) parts.push(`${result.skipped} unchanged`);
     return {
       success: true,
-      message: `Added ${result.added} attendee(s)${skippedNote}.`,
+      message: parts.join(", ") + ".",
     };
   } catch (error) {
-    console.error("appendCsvToSession: append failed partway through:", error);
+    console.error("syncCsvToSession: sync failed partway through:", error);
     return {
       success: false,
-      message: "Import failed partway through — some rows may have been added. Check the roster before retrying.",
+      message: "Sync failed partway through — check the roster before retrying.",
     };
   }
 }
