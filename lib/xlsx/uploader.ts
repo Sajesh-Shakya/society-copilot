@@ -5,7 +5,9 @@
 // Server Action here must call it first, matching the pattern used in
 // lib/attendance/actions.ts.
 
+import { z } from "zod";
 import { requireAdmin } from "@/lib/auth/require-admin";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { parseXlsxFile } from "./parser";
 import { ingestPurchases } from "@/lib/purchase/interface";
 import { RawPurchaseRow } from "@/lib/purchase/types";
@@ -15,8 +17,31 @@ export interface UploadXlsxResult {
   message: string;
 }
 
+const productIdSchema = z.string().uuid();
+
 export async function uploadXlsx(formData: FormData): Promise<UploadXlsxResult> {
   await requireAdmin();
+
+  const parsedProductId = productIdSchema.safeParse(formData.get("productId"));
+  if (!parsedProductId.success) {
+    return { success: false, message: "Select which pass/product this file is for." };
+  }
+
+  // Real exports have no product/pass-type column at all -- the admin
+  // picked one above, and it's trusted here only after confirming it's a
+  // real row in `product` (a stale/forged id would otherwise surface as a
+  // foreign-key error deep inside ingestPurchases instead of a clear
+  // message here).
+  const admin = createAdminClient();
+  const { data: product, error: productError } = await admin
+    .from("product")
+    .select("id")
+    .eq("id", parsedProductId.data)
+    .maybeSingle();
+  if (productError) throw productError;
+  if (!product) {
+    return { success: false, message: "Selected product no longer exists — refresh and try again." };
+  }
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) {
@@ -32,7 +57,7 @@ export async function uploadXlsx(formData: FormData): Promise<UploadXlsxResult> 
   let rows: RawPurchaseRow[];
   let skipped: number;
   try {
-    ({ rows, skipped } = parseXlsxFile(Buffer.from(buffer)));
+    ({ rows, skipped } = parseXlsxFile(Buffer.from(buffer), product.id));
   } catch (error) {
     console.warn("Failed to parse XLSX file:", error);
     return {
@@ -46,7 +71,7 @@ export async function uploadXlsx(formData: FormData): Promise<UploadXlsxResult> 
       success: false,
       message:
         skipped > 0
-          ? `No valid rows found in XLSX — all ${skipped} row(s) failed validation. Check that columns are named name, email, cid, member_type, product_name, purchased_at.`
+          ? `No valid rows found in XLSX — all ${skipped} row(s) failed validation. Check that columns include a name and a purchase date.`
           : "No valid rows found in XLSX — the file appears to be empty.",
     };
   }

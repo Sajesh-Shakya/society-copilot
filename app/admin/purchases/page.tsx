@@ -3,6 +3,7 @@ import { requireAdmin, UnauthorizedError } from '@/lib/auth/require-admin';
 import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { XlsxUploader } from '@/components/purchase/xlsx-uploader';
+import { listProducts } from '@/lib/purchase/queries';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,11 +16,14 @@ export default async function AdminPurchasesPage() {
   }
 
   const admin = createAdminClient();
-  const { data: purchases } = await admin
-    .from('purchase')
-    .select('id, person_id, product_id, source, purchased_at, match_status')
-    .order('purchased_at', { ascending: false })
-    .limit(20);
+  const [{ data: purchases }, products] = await Promise.all([
+    admin
+      .from('purchase')
+      .select('id, person_id, product_id, source, purchased_at, match_status')
+      .order('purchased_at', { ascending: false })
+      .limit(20),
+    listProducts(),
+  ]);
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:py-10">
@@ -31,10 +35,13 @@ export default async function AdminPurchasesPage() {
       <div className="mt-8 rounded-lg border p-4">
         <h2 className="font-semibold">Upload XLSX</h2>
         <p className="text-sm text-muted-foreground">
-          Upload an XLSX file with columns: name, email, cid, member_type, product_name, purchased_at
+          Pick which pass this file is for, then upload it — the export has no
+          product column of its own, so every row in the file is recorded as a
+          purchase of the pass you select. Expected columns: Name, Student ID
+          (or Email), Member Type, Date Purchased.
         </p>
         <div className="mt-4">
-          <XlsxUploader />
+          <XlsxUploader products={products} />
         </div>
       </div>
 

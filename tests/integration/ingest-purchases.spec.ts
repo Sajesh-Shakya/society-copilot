@@ -161,4 +161,61 @@ test.describe("ingestPurchases", () => {
     expect(second.errors).toHaveLength(0);
     expect(await getOutstandingDebt(personId)).toBe(0); // unchanged, not re-waived incorrectly
   });
+
+  test("a row with an explicit productId (the real XLSX-upload path) resolves directly, skipping by-name lookup", async () => {
+    const email = `ingest-test-${randomUUID()}@example.test`;
+    personId = await createPerson(email);
+    await createAttendance(personId, "2026-01-01T18:00:00.000Z"); // free trial
+    await createAttendance(personId, "2026-01-08T18:00:00.000Z"); // debt #1
+
+    const { data: product, error: productError } = await admin
+      .from("product")
+      .insert({ name: `Test Annual Pass ${randomUUID()}`, kind: "annual_pass", covers_days: 365 })
+      .select("id")
+      .single();
+    if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
+    productId = product.id;
+
+    // No productName at all -- mirrors what lib/xlsx/parser.ts now
+    // actually produces for a real export (the admin-selected product,
+    // stamped onto every row, with no product column in the file).
+    const row: RawPurchaseRow = {
+      externalId: `ingest-test-${randomUUID()}`,
+      personName: "Ingest Test Person",
+      personEmail: email,
+      memberType: "Public",
+      productId,
+      purchasedAt: new Date("2026-02-01T00:00:00.000Z"),
+      source: "xlsx_upload",
+    };
+
+    const result = await ingestPurchases([row]);
+
+    expect(result.inserted).toBe(1);
+    expect(result.errors).toHaveLength(0);
+    expect(await getOutstandingDebt(personId)).toBe(0);
+
+    const { data: inserted } = await admin
+      .from("purchase")
+      .select("product_id")
+      .eq("source_row_id", row.externalId)
+      .single();
+    expect(inserted!.product_id).toBe(productId);
+  });
+
+  test("a row with neither productId nor productName is rejected with a clear error", async () => {
+    const row: RawPurchaseRow = {
+      externalId: `ingest-test-${randomUUID()}`,
+      personName: "No Product Person",
+      memberType: "Public",
+      purchasedAt: new Date("2026-02-01T00:00:00.000Z"),
+      source: "xlsx_upload",
+    };
+
+    const result = await ingestPurchases([row]);
+
+    expect(result.inserted).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].reason).toMatch(/productId or productName is required/);
+  });
 });

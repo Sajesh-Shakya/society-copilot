@@ -5,7 +5,14 @@ export interface RawPurchaseRow {
   personEmail?: string;            // optional, varies by source
   personCid?: string;              // optional, Pluto provides, XLSX may not
   memberType: string;              // "Student", "Public", "Associate", etc.
-  productName: string;
+  // Real XLSX exports have no product/pass-type column at all -- the admin
+  // picks one product for the whole file before uploading (see
+  // components/purchase/xlsx-uploader.tsx), stamped onto every row as
+  // productId. productName remains for the Pluto API path (a different
+  // source that may still report its own product name per row) and is
+  // ignored by ingestPurchases whenever productId is present.
+  productId?: string;
+  productName?: string;
   purchasedAt: Date;
   source: 'pluto_api' | 'xlsx_upload';
 }

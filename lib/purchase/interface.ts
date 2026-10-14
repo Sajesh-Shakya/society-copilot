@@ -5,16 +5,25 @@ import { z } from 'zod';
 
 // Minimal shape validation for an incoming row. purchasedAt arrives as a
 // real Date (parsed upstream by the Pluto/XLSX adapters), not a string.
-const rawPurchaseRowSchema = z.object({
-  externalId: z.string().min(1, 'externalId is required'),
-  personName: z.string().min(1, 'personName is required'),
-  personEmail: z.string().optional(),
-  personCid: z.string().optional(),
-  memberType: z.string(),
-  productName: z.string().min(1, 'productName is required'),
-  purchasedAt: z.date({ message: 'purchasedAt must be a valid Date' }),
-  source: z.enum(['pluto_api', 'xlsx_upload']),
-});
+// Either productId (the XLSX path -- an admin-selected product applied to
+// every row, since real exports have no product column) or productName
+// (the Pluto API path, if a future adapter reports one per row) must be
+// present; Step 3 below resolves whichever one is.
+const rawPurchaseRowSchema = z
+  .object({
+    externalId: z.string().min(1, 'externalId is required'),
+    personName: z.string().min(1, 'personName is required'),
+    personEmail: z.string().optional(),
+    personCid: z.string().optional(),
+    memberType: z.string(),
+    productId: z.string().optional(),
+    productName: z.string().optional(),
+    purchasedAt: z.date({ message: 'purchasedAt must be a valid Date' }),
+    source: z.enum(['pluto_api', 'xlsx_upload']),
+  })
+  .refine((row) => Boolean(row.productId || row.productName), {
+    message: 'either productId or productName is required',
+  });
 
 export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<IngestionResult> {
   const admin = createAdminClient();
@@ -57,12 +66,16 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
     console.warn('matchOrQueue threw; treating all rows as unmatched for this batch:', error);
   }
 
-  // Step 3: Resolve each row's product, auto-creating a bare `kind: 'other'`
-  // row when no product of that name exists yet. Known Phase-4-only
-  // shortcut: real product curation (correct kind/covers_sessions for term
-  // and annual passes) is deferred to the debt-calculation phase.
+  // Step 3: Resolve each row's product. A row with an explicit productId
+  // (the XLSX path -- an admin picked a real, already-curated product
+  // before uploading) uses it directly, no lookup needed. Only a row
+  // relying on productName (the Pluto API path) goes through the
+  // by-name upsert, auto-creating a bare `kind: 'other'` row if none
+  // exists yet for that name.
   const productMap = new Map<string, string>();
-  const uniqueProductNames = [...new Set(validRows.map((row) => row.productName))];
+  const uniqueProductNames = [
+    ...new Set(validRows.filter((row) => !row.productId && row.productName).map((row) => row.productName!)),
+  ];
 
   for (const productName of uniqueProductNames) {
     try {
@@ -106,7 +119,7 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
   const purchases: (PurchaseRecord & { sourceRowId: string })[] = [];
 
   for (const row of validRows) {
-    const productId = productMap.get(row.productName);
+    const productId = row.productId ?? productMap.get(row.productName!);
     if (!productId) {
       errors.push({
         rowId: row.externalId,

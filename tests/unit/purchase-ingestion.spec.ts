@@ -7,6 +7,9 @@ import { hashXlsxRow, parseXlsxFile } from "@/lib/xlsx/parser";
 // test runner works fine here since these files just never touch the
 // `page` fixture.
 
+const TERM_PASS_ID = "11111111-1111-1111-1111-111111111111";
+const ANNUAL_PASS_ID = "22222222-2222-2222-2222-222222222222";
+
 test.describe("isStudentMemberType", () => {
   test("matches 'Student' exactly", () => {
     expect(isStudentMemberType("Student")).toBe(true);
@@ -32,7 +35,7 @@ test.describe("hashXlsxRow", () => {
     email: "ada@example.com",
     cid: "01234567",
     memberType: "Student",
-    productName: "Term Pass",
+    productId: TERM_PASS_ID,
     purchasedAt: "2026-01-15T00:00:00.000Z",
   };
 
@@ -48,11 +51,11 @@ test.describe("hashXlsxRow", () => {
     expect(first).not.toBe(second);
   });
 
-  test("differs when any canonical field differs", () => {
+  test("differs when the product differs (e.g. a corrected re-upload under a different pass)", () => {
     const original = hashXlsxRow({ ...base, occurrenceIndex: 0 });
     const differentProduct = hashXlsxRow({
       ...base,
-      productName: "Annual Pass",
+      productId: ANNUAL_PASS_ID,
       occurrenceIndex: 0,
     });
     expect(original).not.toBe(differentProduct);
@@ -67,71 +70,115 @@ test.describe("parseXlsxFile", () => {
     return write(workbook, { type: "buffer", bookType: "xlsx" });
   }
 
-  test("parses a real XLSX buffer with a genuine Date-typed cell", () => {
-    // Regression test for the bug fixed in the purchase-ingestion plan's
-    // Task 4 fix round: a date-typed Excel cell round-trips through
-    // sheet_to_json as a native JS Date (with cellDates: true), not an ISO
-    // string — the schema must accept both.
+  test("parses the real export's header shape (Student ID, Name, Date Purchased, Member Type)", () => {
     const buffer = buildXlsxBuffer([
       {
-        name: "Ada Lovelace",
-        email: "ada@example.com",
-        cid: 1234567, // real Excel CID columns are commonly numeric
-        member_type: "Student",
-        product_name: "Term Pass",
-        purchased_at: new Date("2026-01-15T00:00:00.000Z"),
+        "Student ID": "02665790",
+        Name: "Winnon Venkatesan",
+        "Date Purchased": "14/10/2026 10:55",
+        "Member Type": "Student",
       },
     ]);
 
-    const { rows, skipped } = parseXlsxFile(buffer);
+    const { rows, skipped } = parseXlsxFile(buffer, TERM_PASS_ID);
+
+    expect(skipped).toBe(0);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].personName).toBe("Winnon Venkatesan");
+    expect(rows[0].personCid).toBe("02665790");
+    expect(rows[0].memberType).toBe("Student");
+    expect(rows[0].productId).toBe(TERM_PASS_ID);
+    // UK format DD/MM/YYYY -- must not be misread as US MM/DD (14 isn't a
+    // valid month, which is exactly how this would surface if it were).
+    expect(rows[0].purchasedAt.getUTCFullYear()).toBe(2026);
+    expect(rows[0].purchasedAt.getUTCMonth()).toBe(9); // October, 0-indexed
+    expect(rows[0].purchasedAt.getUTCDate()).toBe(14);
+  });
+
+  test("header matching is case-insensitive and tolerates alternate header names", () => {
+    const buffer = buildXlsxBuffer([
+      { name: "Grace Hopper", cid: "7654321", "member type": "Staff", "purchase date": "2026-02-01" },
+    ]);
+
+    const { rows, skipped } = parseXlsxFile(buffer, TERM_PASS_ID);
+
+    expect(skipped).toBe(0);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].personName).toBe("Grace Hopper");
+    expect(rows[0].personCid).toBe("7654321");
+    expect(rows[0].memberType).toBe("Staff");
+  });
+
+  test("parses a real XLSX buffer with a genuine Date-typed cell", () => {
+    // Regression test: a date-typed Excel cell round-trips through
+    // sheet_to_json as a native JS Date (with cellDates: true), not a
+    // string — getField must convert it, not just pass it through.
+    const buffer = buildXlsxBuffer([
+      {
+        Name: "Ada Lovelace",
+        "Student ID": 1234567, // real Excel CID columns are commonly numeric
+        "Member Type": "Student",
+        "Date Purchased": new Date("2026-01-15T00:00:00.000Z"),
+      },
+    ]);
+
+    const { rows, skipped } = parseXlsxFile(buffer, TERM_PASS_ID);
 
     expect(skipped).toBe(0);
     expect(rows).toHaveLength(1);
     expect(rows[0].personCid).toBe("1234567");
-    expect(rows[0].memberType).toBe("Student");
     expect(rows[0].purchasedAt.toISOString()).toBe("2026-01-15T00:00:00.000Z");
   });
 
   test("defaults a blank member_type to a valid row instead of dropping it", () => {
-    const buffer = buildXlsxBuffer([
-      {
-        name: "Grace Hopper",
-        product_name: "Session Pass",
-        purchased_at: "2026-02-01",
-      },
-    ]);
+    const buffer = buildXlsxBuffer([{ Name: "Grace Hopper", "Date Purchased": "2026-02-01" }]);
 
-    const { rows, skipped } = parseXlsxFile(buffer);
+    const { rows, skipped } = parseXlsxFile(buffer, TERM_PASS_ID);
 
     expect(skipped).toBe(0);
     expect(rows).toHaveLength(1);
     expect(rows[0].memberType).toBe("");
   });
 
-  test("skips rows missing a required field and reports the count", () => {
+  test("skips rows missing a required field (name) and reports the count", () => {
     const buffer = buildXlsxBuffer([
-      { name: "Valid Row", product_name: "Term Pass", purchased_at: "2026-01-01" },
-      { name: "Missing product", purchased_at: "2026-01-01" }, // no product_name
+      { Name: "Valid Row", "Date Purchased": "2026-01-01" },
+      { "Date Purchased": "2026-01-01" }, // no Name
     ]);
 
-    const { rows, skipped } = parseXlsxFile(buffer);
+    const { rows, skipped } = parseXlsxFile(buffer, TERM_PASS_ID);
 
     expect(rows).toHaveLength(1);
     expect(skipped).toBe(1);
   });
 
+  test("skips a row with an unparseable purchase date", () => {
+    const buffer = buildXlsxBuffer([{ Name: "Valid Row", "Date Purchased": "not a date" }]);
+
+    const { rows, skipped } = parseXlsxFile(buffer, TERM_PASS_ID);
+
+    expect(rows).toHaveLength(0);
+    expect(skipped).toBe(1);
+  });
+
   test("assigns distinct hashes to two identical rows in the same file", () => {
-    const identicalRow = {
-      name: "Ada Lovelace",
-      email: "ada@example.com",
-      product_name: "Term Pass",
-      purchased_at: "2026-01-15",
-    };
+    const identicalRow = { Name: "Ada Lovelace", Email: "ada@example.com", "Date Purchased": "2026-01-15" };
     const buffer = buildXlsxBuffer([identicalRow, identicalRow]);
 
-    const { rows } = parseXlsxFile(buffer);
+    const { rows } = parseXlsxFile(buffer, TERM_PASS_ID);
 
     expect(rows).toHaveLength(2);
     expect(rows[0].externalId).not.toBe(rows[1].externalId);
+  });
+
+  test("every row is stamped with the given productId, not read from the file", () => {
+    const buffer = buildXlsxBuffer([
+      { Name: "Ada Lovelace", "Date Purchased": "2026-01-15", "Product Name": "Something Else" },
+    ]);
+
+    const { rows } = parseXlsxFile(buffer, ANNUAL_PASS_ID);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].productId).toBe(ANNUAL_PASS_ID);
   });
 });

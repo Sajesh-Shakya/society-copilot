@@ -208,4 +208,88 @@ test.describe("applyWaivers", () => {
     expect(first).toBe(1);
     expect(second).toBe(0); // nothing left to waive the second time
   });
+
+  test("a session_pass with covers_until does not waive a session on or after the cutoff", async () => {
+    personId = await createPerson();
+    await createAttendance(personId, "2026-01-01T18:00:00.000Z"); // free trial
+    await createAttendance(personId, "2026-01-08T18:00:00.000Z"); // debt #1, before cutoff
+    await createAttendance(personId, "2026-01-22T18:00:00.000Z"); // debt #2, on/after cutoff
+
+    expect(await getOutstandingDebt(personId)).toBe(2);
+
+    const { data: product, error: productError } = await admin
+      .from("product")
+      .insert({
+        name: `Test Expiring Session Pack ${randomUUID()}`,
+        kind: "session_pass",
+        covers_sessions: 5, // generous cap -- covers_until should be the binding limit
+        covers_until: "2026-01-15T00:00:00.000Z",
+      })
+      .select("id")
+      .single();
+    if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
+    productId = product.id;
+
+    const { data: purchase, error: purchaseError } = await admin
+      .from("purchase")
+      .insert({
+        person_id: personId,
+        product_id: productId,
+        source: "xlsx_upload",
+        source_row_id: `waiver-test-${randomUUID()}`,
+        purchased_at: "2026-02-01T00:00:00.000Z",
+        match_status: "cid_matched",
+      })
+      .select("id")
+      .single();
+    if (purchaseError || !purchase) throw new Error(`Failed to create test purchase: ${purchaseError?.message}`);
+    purchaseId = purchase.id;
+
+    const waivedCount = await applyWaivers(personId, purchaseId!);
+
+    // Only the pre-cutoff session is waived -- covers_sessions=5 would
+    // otherwise have waived both.
+    expect(waivedCount).toBe(1);
+    expect(await getOutstandingDebt(personId)).toBe(1);
+  });
+
+  test("a term_pass with covers_until excludes only sessions before the absolute cutoff, continuously", async () => {
+    personId = await createPerson();
+    await createAttendance(personId, "2026-01-01T18:00:00.000Z"); // free trial
+    await createAttendance(personId, "2026-01-10T18:00:00.000Z"); // within the pass window
+    await createAttendance(personId, "2026-01-25T18:00:00.000Z"); // after covers_until
+
+    const { data: product, error: productError } = await admin
+      .from("product")
+      .insert({
+        name: `Test Expiring Term Pass ${randomUUID()}`,
+        kind: "term_pass",
+        covers_until: "2026-01-20T00:00:00.000Z",
+      })
+      .select("id")
+      .single();
+    if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
+    productId = product.id;
+
+    const { data: purchase, error: purchaseError } = await admin
+      .from("purchase")
+      .insert({
+        person_id: personId,
+        product_id: productId,
+        source: "xlsx_upload",
+        source_row_id: `waiver-test-${randomUUID()}`,
+        purchased_at: "2026-01-05T00:00:00.000Z",
+        match_status: "cid_matched",
+      })
+      .select("id")
+      .single();
+    if (purchaseError || !purchase) throw new Error(`Failed to create test purchase: ${purchaseError?.message}`);
+    purchaseId = purchase.id;
+
+    // Unlike session_pass, term/annual coverage is continuous (enforced by
+    // outstanding_attendance's own window check), not a one-time waive --
+    // no applyWaivers call needed for the within-window session to
+    // disappear from debt.
+    expect(await getOutstandingDebt(personId)).toBe(1); // only the post-cutoff session
+  });
 });
