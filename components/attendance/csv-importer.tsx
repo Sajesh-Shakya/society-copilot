@@ -61,19 +61,24 @@ export function CsvImporter() {
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="file">Attendee CSV (exported from eActivities&apos; dashboard)</Label>
         {/* A bare <input type="file"> renders as a tiny, easy-to-miss
-            browser-default control -- hidden here in favor of a real
-            Button that triggers it, matching append-csv-button.tsx's
-            pattern. Not `required`: the browser can't show its native
-            validation bubble against a hidden element, which would
-            silently block submission with no visible feedback -- the
-            file is validated explicitly in handleSubmit instead. */}
+            browser-default control -- visually hidden here in favor of a
+            real Button that triggers it, matching sync-csv-button.tsx's
+            pattern. `sr-only` (not `hidden`/display:none): several mobile
+            browsers (notably iOS Safari) refuse to open the native file
+            picker for a programmatically-clicked input that's fully
+            display:none, even from a real user gesture -- it has to stay
+            in the layout, just visually invisible. Not `required`: the
+            browser can't show its native validation bubble against a
+            hidden element, which would silently block submission with no
+            visible feedback -- the file is validated explicitly in
+            handleSubmit instead. */}
         <input
           ref={fileInputRef}
           id="file"
           name="file"
           type="file"
           accept=".csv"
-          className="hidden"
+          className="sr-only"
           onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
         />
         <div className="flex items-center gap-3">

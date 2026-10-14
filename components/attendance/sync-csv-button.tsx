@@ -52,11 +52,14 @@ export function SyncCsvButton({
 
   return (
     <>
+      {/* sr-only, not hidden/display:none -- several mobile browsers
+          (notably iOS Safari) refuse to open the native file picker for a
+          programmatically-clicked input that's fully display:none. */}
       <input
         ref={fileInputRef}
         type="file"
         accept=".csv"
-        className="hidden"
+        className="sr-only"
         onChange={handleFileChange}
       />
       <Button
