@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { FilePickerButton, type FilePickerButtonHandle } from "@/components/ui/file-picker-button";
 import { syncCsvToSession } from "@/lib/csv-import/actions";
 
 /**
@@ -23,13 +23,10 @@ export function SyncCsvButton({
   sessionId: string;
   onSynced: () => void;
 }) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const pickerRef = useRef<FilePickerButtonHandle>(null);
   const [isPending, setIsPending] = useState(false);
 
-  function handleFileChange() {
-    const file = fileInputRef.current?.files?.[0];
-    if (!file) return;
-
+  function handleFileSelected(file: File) {
     const formData = new FormData();
     formData.set("file", file);
 
@@ -46,30 +43,19 @@ export function SyncCsvButton({
       .catch(() => toast.error("Sync failed unexpectedly."))
       .finally(() => {
         setIsPending(false);
-        if (fileInputRef.current) fileInputRef.current.value = "";
+        pickerRef.current?.reset();
       });
   }
 
   return (
-    <>
-      {/* sr-only, not hidden/display:none -- several mobile browsers
-          (notably iOS Safari) refuse to open the native file picker for a
-          programmatically-clicked input that's fully display:none. */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".csv"
-        className="sr-only"
-        onChange={handleFileChange}
-      />
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={isPending}
-        onClick={() => fileInputRef.current?.click()}
-      >
-        {isPending ? "Syncing…" : "Update from CSV"}
-      </Button>
-    </>
+    <FilePickerButton
+      ref={pickerRef}
+      accept=".csv"
+      size="sm"
+      isLoading={isPending}
+      loadingLabel="Syncing…"
+      label="Update from CSV"
+      onFileSelected={handleFileSelected}
+    />
   );
 }
