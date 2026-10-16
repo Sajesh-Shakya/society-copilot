@@ -20,7 +20,7 @@ export interface RawPurchaseRow {
 // Result of matching attempt
 export interface MatchResult {
   personId?: string;               // null if unmatched
-  matchStatus: 'cid_matched' | 'email_matched' | 'manual_matched' | 'unmatched';
+  matchStatus: 'cid_matched' | 'email_matched' | 'name_matched' | 'manual_matched' | 'unmatched';
   confidence?: 'high' | 'medium' | 'low';
 }
 

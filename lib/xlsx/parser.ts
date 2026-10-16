@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { read, utils } from "xlsx";
 import { z } from "zod";
 import { RawPurchaseRow } from "@/lib/purchase/types";
+import { normalizeCid } from "@/lib/utils";
 
 // Case-insensitive, whitespace-tolerant header lookup -- mirrors
 // lib/csv-import/parser.ts's getField. xlsx's sheet_to_json() keys each
@@ -141,6 +142,7 @@ export function parseXlsxFile(buffer: Buffer, productId: string): ParseXlsxResul
     const rawName = getField(row, ["name", "full name", "student name"]);
     const rawEmail = getField(row, ["email"]);
     const rawCid = getField(row, ["cid", "student id", "card number", "card no"]);
+    const normalizedCid = rawCid ? normalizeCid(rawCid) : undefined;
     const rawMemberType = getField(row, ["member type", "membertype"]);
     const rawPurchasedAt = getField(row, ["purchased_at", "date purchased", "purchase date", "date"]);
 
@@ -148,7 +150,7 @@ export function parseXlsxFile(buffer: Buffer, productId: string): ParseXlsxResul
       const validated = XlsxRowSchema.parse({
         name: rawName,
         email: rawEmail,
-        cid: rawCid,
+        cid: normalizedCid,
         member_type: rawMemberType,
         purchased_at: rawPurchasedAt,
       });

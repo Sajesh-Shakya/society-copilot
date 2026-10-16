@@ -1,13 +1,21 @@
 import { read, utils } from "xlsx";
 import { z } from "zod";
+import { normalizeCid } from "@/lib/utils";
 
 export interface AttendeeRow {
   firstName: string;
   surname: string;
   email: string;
-  // Deliberately never used for identity matching -- see the 2026-10-09
-  // design doc's "Decisions already made". Kept only so the caller can
-  // persist it for audit (attendance_record.raw_cid_or_card_number).
+  // Deliberately never used to MATCH/merge an existing person during CSV
+  // import itself -- see the 2026-10-09 design doc's "Decisions already
+  // made" (email alone decides that). importer.ts does persist it onto
+  // person.cid (backfilling only, never overwriting) once a person is
+  // resolved, since this value has turned out to reliably be a real
+  // 8-digit Imperial CID in practice, not the ambiguous value the design
+  // doc worried it might be -- that enables other subsystems (purchase
+  // CID matching, see lib/purchase/matcher.ts) that had nothing to match
+  // against before. Also stored verbatim on
+  // attendance_record.raw_cid_or_card_number for audit either way.
   rawCidOrCardNumber: string | null;
 }
 
@@ -79,7 +87,8 @@ export function parseAttendeeCsv(buffer: Buffer): ParseAttendeeCsvResult {
     const firstName = getField(raw, "First Name");
     const surname = getField(raw, "Surname");
     const email = getField(raw, "Email");
-    const rawCidOrCardNumber = getField(raw, "CID/Card Number") ?? null;
+    const rawCidField = getField(raw, "CID/Card Number");
+    const rawCidOrCardNumber = rawCidField ? normalizeCid(rawCidField) : null;
 
     const missing: string[] = [];
     if (!firstName) missing.push("First Name");

@@ -18,13 +18,17 @@ test.describe("parseAttendeeCsv", () => {
         firstName: "Aaron",
         surname: "Garcia",
         email: "aaron.garcia25@imperial.ac.uk",
-        rawCidOrCardNumber: "2577809",
+        // Zero-padded to 8 digits -- see normalizeCid in lib/utils.ts.
+        // The real CID/Card Number column observed in practice is 7
+        // digits with the leading zero already dropped (just like an
+        // Excel numeric cell loses it), and real Imperial CIDs are 8.
+        rawCidOrCardNumber: "02577809",
       },
       {
         firstName: "Abbas",
         surname: "Azani",
         email: "abbas.azani26@imperial.ac.uk",
-        rawCidOrCardNumber: "2798711",
+        rawCidOrCardNumber: "02798711",
       },
     ]);
   });

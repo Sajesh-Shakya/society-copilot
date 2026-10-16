@@ -34,7 +34,7 @@ export function AddAttendee({
   const [showWalkIn, setShowWalkIn] = useState(false);
   const [walkInEmail, setWalkInEmail] = useState("");
   const [walkInName, setWalkInName] = useState("");
-  const [walkInShortcode, setWalkInShortcode] = useState("");
+  const [walkInCid, setWalkInCid] = useState("");
   const [isPending, startTransition] = useTransition();
 
   function reset() {
@@ -44,7 +44,7 @@ export function AddAttendee({
     setShowWalkIn(false);
     setWalkInEmail("");
     setWalkInName("");
-    setWalkInShortcode("");
+    setWalkInCid("");
   }
 
   function handleSearch(value: string) {
@@ -96,7 +96,7 @@ export function AddAttendee({
           sessionId,
           email: walkInEmail,
           fullName: walkInName,
-          shortcode: walkInShortcode || undefined,
+          cid: walkInCid || undefined,
         });
         onAdded({
           attendanceRecordId: crypto.randomUUID(),
@@ -187,11 +187,11 @@ export function AddAttendee({
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="walkin-shortcode">Shortcode (optional)</Label>
+              <Label htmlFor="walkin-cid">CID (optional — external/non-member guests won&apos;t have one)</Label>
               <Input
-                id="walkin-shortcode"
-                value={walkInShortcode}
-                onChange={(e) => setWalkInShortcode(e.target.value)}
+                id="walkin-cid"
+                value={walkInCid}
+                onChange={(e) => setWalkInCid(e.target.value)}
               />
             </div>
             <Button onClick={handleCreateWalkIn} disabled={isPending || !walkInEmail || !walkInName} className="self-start">

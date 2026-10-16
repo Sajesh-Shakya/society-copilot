@@ -105,7 +105,7 @@ test.describe("parseXlsxFile", () => {
     expect(skipped).toBe(0);
     expect(rows).toHaveLength(1);
     expect(rows[0].personName).toBe("Grace Hopper");
-    expect(rows[0].personCid).toBe("7654321");
+    expect(rows[0].personCid).toBe("07654321"); // zero-padded -- see normalizeCid in lib/utils.ts
     expect(rows[0].memberType).toBe("Staff");
   });
 
@@ -126,7 +126,7 @@ test.describe("parseXlsxFile", () => {
 
     expect(skipped).toBe(0);
     expect(rows).toHaveLength(1);
-    expect(rows[0].personCid).toBe("1234567");
+    expect(rows[0].personCid).toBe("01234567"); // zero-padded -- see normalizeCid in lib/utils.ts
     expect(rows[0].purchasedAt.toISOString()).toBe("2026-01-15T00:00:00.000Z");
   });
 

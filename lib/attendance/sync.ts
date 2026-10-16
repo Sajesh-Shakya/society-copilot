@@ -1,7 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { EactivitiesProvider } from "@/lib/eactivities/provider";
 import type { Attendee } from "@/lib/eactivities/types";
-import { escapeIlikePattern } from "@/lib/utils";
+import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
 
 export class SessionNotBoundError extends Error {
   constructor(sessionId: string) {
@@ -48,11 +48,13 @@ async function findOrCreatePerson(
   admin: AdminClient,
   attendee: Attendee
 ): Promise<{ id: string; created: boolean }> {
-  if (attendee.CID) {
+  const cid = attendee.CID ? normalizeCid(attendee.CID) : null;
+
+  if (cid) {
     const { data: byCid } = await admin
       .from("person")
       .select("id")
-      .eq("cid", attendee.CID)
+      .eq("cid", cid)
       .maybeSingle();
     if (byCid) return { id: byCid.id, created: false };
   }
@@ -60,15 +62,23 @@ async function findOrCreatePerson(
   const email = attendee.Email.toLowerCase();
   const { data: byEmail } = await admin
     .from("person")
-    .select("id")
+    .select("id, cid")
     .ilike("email", escapeIlikePattern(email))
     .maybeSingle();
-  if (byEmail) return { id: byEmail.id, created: false };
+  if (byEmail) {
+    // Backfill, never overwrite -- same rule as the CSV-import path (see
+    // lib/csv-import/importer.ts's findOrCreatePersonByEmail).
+    if (cid && !byEmail.cid) {
+      const { error: backfillError } = await admin.from("person").update({ cid }).eq("id", byEmail.id);
+      if (backfillError) throw backfillError;
+    }
+    return { id: byEmail.id, created: false };
+  }
 
   const { data: created, error } = await admin
     .from("person")
     .insert({
-      cid: attendee.CID,
+      cid,
       shortcode: attendee.Login,
       email: attendee.Email,
       full_name: `${attendee.FirstName} ${attendee.Surname}`.trim(),

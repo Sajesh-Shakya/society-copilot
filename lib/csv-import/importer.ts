@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { escapeIlikePattern } from "@/lib/utils";
+import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
 import type { AttendeeRow } from "./parser";
 
 // Mirrors lib/attendance/actions.ts's createSessionFromSignup schema for
@@ -29,17 +29,34 @@ type AdminClient = ReturnType<typeof createAdminClient>;
  * wildcard-escaped -- see lib/utils.ts's escapeIlikePattern), creating one
  * if none exists. Shared by both the create-new-session and append-to-
  * existing-session import paths so they match/create people identically.
+ *
+ * Also backfills person.cid from the row's CID/Card Number when the
+ * person doesn't already have one -- this is NOT part of identity
+ * matching (email alone still decides who a row refers to, unchanged),
+ * it's populating a field nothing had ever written for anyone created
+ * via CSV import, which otherwise left purchase-record CID matching
+ * (lib/purchase/matcher.ts) with nothing to match against. Never
+ * overwrites an existing cid -- if one's already recorded (e.g. a real
+ * eActivities sync), it's trusted over this row's value.
  */
 async function findOrCreatePersonByEmail(admin: AdminClient, row: AttendeeRow): Promise<string> {
   const email = row.email.toLowerCase();
+  const cid = row.rawCidOrCardNumber ? normalizeCid(row.rawCidOrCardNumber) : null;
+
   const { data: existing, error: lookupError } = await admin
     .from("person")
-    .select("id")
+    .select("id, cid")
     .ilike("email", escapeIlikePattern(email))
     .maybeSingle();
   if (lookupError) throw lookupError;
 
-  if (existing) return existing.id;
+  if (existing) {
+    if (cid && !existing.cid) {
+      const { error: backfillError } = await admin.from("person").update({ cid }).eq("id", existing.id);
+      if (backfillError) throw backfillError;
+    }
+    return existing.id;
+  }
 
   const { data: created, error: personError } = await admin
     .from("person")
@@ -47,6 +64,7 @@ async function findOrCreatePersonByEmail(admin: AdminClient, row: AttendeeRow): 
       email: row.email,
       full_name: `${row.firstName} ${row.surname}`.trim(),
       identity_confidence: "confirmed",
+      cid,
     })
     .select("id")
     .single();

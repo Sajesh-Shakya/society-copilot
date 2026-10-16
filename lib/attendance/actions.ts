@@ -11,7 +11,7 @@ import { EactivitiesProvider } from "@/lib/eactivities/provider";
 import { syncSessionAttendance } from "@/lib/attendance/sync";
 import { getSessionWithAttendance } from "@/lib/attendance/queries";
 import { requireAdmin } from "@/lib/auth/require-admin";
-import { escapeIlikePattern } from "@/lib/utils";
+import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
 
 const provider = new EactivitiesProvider();
 
@@ -217,40 +217,61 @@ const walkInSchema = z.object({
   sessionId: z.string().uuid(),
   email: z.string().email(),
   fullName: z.string().min(1).max(200),
-  shortcode: z.string().max(50).optional(),
+  // An external/non-member guest won't have one (they can't sign up via
+  // eActivities' whatson at all, hence walk-in) -- a student who is one
+  // might, and capturing it here is what lets a later purchase (lib/
+  // purchase/matcher.ts's CID match) actually find them.
+  cid: z.string().max(20).optional(),
 });
 
 export async function createWalkIn(
   input: z.infer<typeof walkInSchema>
 ): Promise<{ personId: string; reusedExisting: boolean }> {
   await requireAdmin();
-  const { sessionId, email, fullName, shortcode } = walkInSchema.parse(input);
+  const { sessionId, email, fullName, cid: rawCid } = walkInSchema.parse(input);
+  const cid = rawCid ? normalizeCid(rawCid) : null;
   const admin = createAdminClient();
 
-  // Someone searching the roster only sees people already on *this*
-  // session's list filtered out (see AddAttendee) — they can still land
-  // here via "create new person" for someone who already exists in the
-  // `person` table generally (a different session, or added before this
-  // one existed). person.email has no DB-level unique constraint, so
-  // without this check every such case would silently create a duplicate
-  // person row instead of reusing the real one.
-  const { data: existing, error: existingError } = await admin
-    .from("person")
-    .select("id")
-    .ilike("email", escapeIlikePattern(email))
-    .maybeSingle();
-  if (existingError) throw existingError;
+  // CID first, if given -- mirrors lib/attendance/sync.ts's identity
+  // priority (CID is the one identifier this codebase actually trusts).
+  // Falls back to email -- someone searching the roster only sees people
+  // already on *this* session's list filtered out (see AddAttendee),
+  // they can still land here via "create new person" for someone who
+  // already exists in the `person` table generally (a different session,
+  // or added before this one existed). person.email has no DB-level
+  // unique constraint, so without this check every such case would
+  // silently create a duplicate person row instead of reusing the real
+  // one.
+  let existing: { id: string; cid: string | null } | null = null;
+  if (cid) {
+    const { data, error } = await admin.from("person").select("id, cid").eq("cid", cid).maybeSingle();
+    if (error) throw error;
+    existing = data;
+  }
+  if (!existing) {
+    const { data, error } = await admin
+      .from("person")
+      .select("id, cid")
+      .ilike("email", escapeIlikePattern(email))
+      .maybeSingle();
+    if (error) throw error;
+    existing = data;
+  }
 
   let personId: string;
   if (existing) {
     personId = existing.id;
+    if (cid && !existing.cid) {
+      const { error: backfillError } = await admin.from("person").update({ cid }).eq("id", existing.id);
+      if (backfillError) throw backfillError;
+    }
   } else {
     const { data: person, error: personError } = await admin
       .from("person")
       .insert({
         email,
         full_name: fullName,
-        shortcode: shortcode || null,
+        cid,
         identity_confidence: "provisional",
       })
       .select("id")
