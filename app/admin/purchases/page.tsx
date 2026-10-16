@@ -3,6 +3,7 @@ import { requireAdmin, UnauthorizedError } from '@/lib/auth/require-admin';
 import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { XlsxUploader } from '@/components/purchase/xlsx-uploader';
+import { PurchasesTable, type PurchaseRow } from '@/components/purchase/purchases-table';
 import { listProducts } from '@/lib/purchase/queries';
 
 export const dynamic = 'force-dynamic';
@@ -16,14 +17,35 @@ export default async function AdminPurchasesPage() {
   }
 
   const admin = createAdminClient();
-  const [{ data: purchases }, products] = await Promise.all([
+  const [{ data: rawPurchases }, products] = await Promise.all([
     admin
       .from('purchase')
-      .select('id, person_id, product_id, source, purchased_at, match_status')
+      .select(
+        'id, raw_person_name, raw_cid, raw_email, source, purchased_at, match_status, product:product_id(name), person:person_id(full_name)'
+      )
       .order('purchased_at', { ascending: false })
       .limit(20),
     listProducts(),
   ]);
+
+  const purchases: PurchaseRow[] = (rawPurchases ?? []).map((p) => {
+    // supabase-js types a to-one FK select as an array; each is always
+    // exactly one row (or none, for an unmatched purchase's null
+    // person_id) since both are not-null FKs when present.
+    const product = Array.isArray(p.product) ? p.product[0] : p.product;
+    const person = Array.isArray(p.person) ? p.person[0] : p.person;
+    return {
+      id: p.id,
+      rawPersonName: p.raw_person_name,
+      rawCid: p.raw_cid,
+      rawEmail: p.raw_email,
+      productName: product?.name ?? null,
+      matchStatus: p.match_status,
+      matchedPersonName: person?.full_name ?? null,
+      source: p.source,
+      purchasedAt: p.purchased_at,
+    };
+  });
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:py-10">
@@ -46,27 +68,10 @@ export default async function AdminPurchasesPage() {
       </div>
 
       <div className="mt-8">
-        <h2 className="font-semibold">Recent Purchases ({purchases?.length || 0})</h2>
-        {purchases && purchases.length > 0 ? (
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b">
-                  <th className="whitespace-nowrap text-left py-2">Source</th>
-                  <th className="whitespace-nowrap text-left py-2">Status</th>
-                  <th className="whitespace-nowrap text-left py-2">Purchased</th>
-                </tr>
-              </thead>
-              <tbody>
-                {purchases.map((p) => (
-                  <tr key={p.id} className="border-b">
-                    <td className="whitespace-nowrap py-2">{p.source}</td>
-                    <td className="whitespace-nowrap py-2">{p.match_status}</td>
-                    <td className="whitespace-nowrap py-2">{new Date(p.purchased_at).toLocaleDateString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <h2 className="font-semibold">Recent Purchases ({purchases.length})</h2>
+        {purchases.length > 0 ? (
+          <div className="mt-4">
+            <PurchasesTable purchases={purchases} />
           </div>
         ) : (
           <p className="mt-4 text-sm text-muted-foreground">No purchases yet.</p>
