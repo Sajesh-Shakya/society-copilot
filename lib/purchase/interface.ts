@@ -1,6 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { RawPurchaseRow, PurchaseRecord, IngestionResult, IngestionError, isStudentMemberType } from './types';
-import { matchOrQueue } from './matcher';
+import { matchOrQueue, matchPersonRecord } from './matcher';
 import { z } from 'zod';
 
 // Minimal shape validation for an incoming row. purchasedAt arrives as a
@@ -268,4 +268,63 @@ export async function applyWaivers(personId: string, purchaseId: string): Promis
   }
 
   return data ?? 0;
+}
+
+export interface RematchResult {
+  matched: number;
+  stillUnmatched: number;
+}
+
+/**
+ * Re-runs matching for every currently-unmatched purchase and applies any
+ * waiver it unlocks. Matching only ever ran once, at upload time -- if the
+ * buyer's person record (or their person.cid) didn't exist yet at that
+ * exact moment (e.g. the purchase was logged before they ever attended a
+ * session, or their CID was only recorded moments later via the walk-in
+ * form), the row stays unmatched forever unless something re-checks it.
+ * Exposed as an admin action (lib/purchase/actions.ts) so this is a button
+ * on the purchases page rather than a one-off script every time it
+ * recurs.
+ */
+export async function rematchUnmatchedPurchases(): Promise<RematchResult> {
+  const admin = createAdminClient();
+
+  const { data: unmatched, error } = await admin
+    .from('purchase')
+    .select('id, raw_person_name, raw_cid, raw_email, raw_member_type, purchased_at')
+    .eq('match_status', 'unmatched');
+  if (error) throw error;
+
+  let matched = 0;
+  let stillUnmatched = 0;
+
+  for (const p of unmatched ?? []) {
+    const row: RawPurchaseRow = {
+      externalId: p.id,
+      personName: p.raw_person_name,
+      personEmail: p.raw_email ?? undefined,
+      personCid: p.raw_cid ?? undefined,
+      memberType: p.raw_member_type ?? '',
+      productId: 'unused', // matchPersonRecord doesn't read product
+      purchasedAt: new Date(p.purchased_at),
+      source: 'xlsx_upload',
+    };
+
+    const result = await matchPersonRecord(row);
+    if (result.matchStatus === 'unmatched') {
+      stillUnmatched++;
+      continue;
+    }
+
+    const { error: updateError } = await admin
+      .from('purchase')
+      .update({ person_id: result.personId, match_status: result.matchStatus })
+      .eq('id', p.id);
+    if (updateError) throw updateError;
+
+    await applyWaivers(result.personId!, p.id);
+    matched++;
+  }
+
+  return { matched, stillUnmatched };
 }

@@ -1,8 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { rematchUnmatchedPurchases } from "@/lib/purchase/actions";
 
 export interface PurchaseRow {
   id: string;
@@ -33,11 +36,38 @@ const MATCH_STATUS_VARIANT: Record<string, "secondary" | "destructive"> = {
  * "Show emails" pattern on the attendance screen.
  */
 export function PurchasesTable({ purchases }: { purchases: PurchaseRow[] }) {
+  const router = useRouter();
   const [showEmails, setShowEmails] = useState(false);
+  const [isRematching, startRematch] = useTransition();
+
+  const unmatchedCount = purchases.filter((p) => p.matchStatus === "unmatched").length;
+
+  function handleRematch() {
+    startRematch(async () => {
+      try {
+        const result = await rematchUnmatchedPurchases();
+        if (result.matched > 0) {
+          toast.success(
+            `Matched ${result.matched} purchase(s)${result.stillUnmatched > 0 ? ` (${result.stillUnmatched} still unmatched)` : ""}.`
+          );
+          router.refresh();
+        } else {
+          toast.info("No change — still unmatched. This person likely isn't in the system yet (e.g. hasn't attended a session).");
+        }
+      } catch {
+        toast.error("Re-check failed unexpectedly.");
+      }
+    });
+  }
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-2">
+        {unmatchedCount > 0 && (
+          <Button variant="outline" size="sm" disabled={isRematching} onClick={handleRematch}>
+            {isRematching ? "Re-checking…" : `Re-check ${unmatchedCount} unmatched`}
+          </Button>
+        )}
         <Button variant="ghost" size="sm" onClick={() => setShowEmails((v) => !v)}>
           {showEmails ? "Hide emails" : "Show emails"}
         </Button>
