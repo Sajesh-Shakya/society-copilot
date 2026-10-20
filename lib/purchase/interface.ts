@@ -18,6 +18,7 @@ const rawPurchaseRowSchema = z
     memberType: z.string(),
     productId: z.string().optional(),
     productName: z.string().optional(),
+    uploadId: z.string().optional(),
     purchasedAt: z.date({ message: 'purchasedAt must be a valid Date' }),
     source: z.enum(['pluto_api', 'xlsx_upload']),
   })
@@ -138,6 +139,7 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
     purchases.push({
       personId: matchResult?.personId ?? null,
       productId,
+      uploadId: row.uploadId ?? null,
       source: row.source,
       sourceRowId: row.externalId,
       rawMemberType: row.memberType,
@@ -180,6 +182,7 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
         .insert({
           person_id: purchase.personId,
           product_id: purchase.productId,
+          upload_id: purchase.uploadId,
           source: purchase.source,
           source_row_id: purchase.sourceRowId,
           raw_member_type: purchase.rawMemberType,
@@ -327,4 +330,128 @@ export async function rematchUnmatchedPurchases(): Promise<RematchResult> {
   }
 
   return { matched, stillUnmatched };
+}
+
+export interface UploadBatch {
+  id: string;
+  productId: string;
+  productName: string;
+  filename: string | null;
+  rowCount: number;
+  uploadedBy: string | null;
+  createdAt: string;
+}
+
+/**
+ * The last N XLSX upload batches (newest first), for the "recent uploads"
+ * list that lets an admin correct or undo an accidental wrong-product
+ * upload. See changeUploadProduct/undoUpload below.
+ */
+export async function listRecentUploads(limit = 5): Promise<UploadBatch[]> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from('purchase_upload')
+    .select('id, product_id, filename, row_count, uploaded_by, created_at, product:product_id(name)')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+
+  return (data ?? []).map((u) => {
+    // supabase-js types a to-one FK select as an array; always exactly
+    // one row since product_id is not-null with a FK.
+    const product = Array.isArray(u.product) ? u.product[0] : u.product;
+    return {
+      id: u.id,
+      productId: u.product_id,
+      productName: product?.name ?? 'Unknown product',
+      filename: u.filename,
+      rowCount: u.row_count,
+      uploadedBy: u.uploaded_by,
+      createdAt: u.created_at,
+    };
+  });
+}
+
+/**
+ * Corrects an accidental wrong-product upload after the fact: re-points
+ * every purchase in the batch at the new product, and re-applies waivers
+ * under the new product's rules. Un-waives first -- the old product may
+ * have waived a different count or a different set of sessions than the
+ * new one will (e.g. a 10-session batch pass wrongly uploaded as a
+ * single-session pass would have only waived 1 session; correcting it
+ * should let the other 9 waive too, which can't happen while they're
+ * still marked waived by the same purchase under the stale rule).
+ */
+export async function changeUploadProduct(
+  uploadId: string,
+  newProductId: string
+): Promise<{ purchasesUpdated: number; rewaived: number }> {
+  const admin = createAdminClient();
+
+  const { data: purchases, error } = await admin
+    .from('purchase')
+    .select('id, person_id')
+    .eq('upload_id', uploadId);
+  if (error) throw error;
+  if (!purchases || purchases.length === 0) {
+    return { purchasesUpdated: 0, rewaived: 0 };
+  }
+
+  const purchaseIds = purchases.map((p) => p.id);
+
+  const { error: unwaiveError } = await admin
+    .from('attendance_record')
+    .update({ waived_by_purchase_id: null })
+    .in('waived_by_purchase_id', purchaseIds);
+  if (unwaiveError) throw unwaiveError;
+
+  const { error: updatePurchasesError } = await admin
+    .from('purchase')
+    .update({ product_id: newProductId })
+    .eq('upload_id', uploadId);
+  if (updatePurchasesError) throw updatePurchasesError;
+
+  const { error: updateUploadError } = await admin
+    .from('purchase_upload')
+    .update({ product_id: newProductId })
+    .eq('id', uploadId);
+  if (updateUploadError) throw updateUploadError;
+
+  let rewaived = 0;
+  for (const p of purchases) {
+    if (!p.person_id) continue;
+    rewaived += await applyWaivers(p.person_id, p.id);
+  }
+
+  return { purchasesUpdated: purchaseIds.length, rewaived };
+}
+
+/**
+ * Fully reverses an upload: un-waives anything it waived, deletes every
+ * purchase row it created, then deletes the batch itself. For "I uploaded
+ * completely the wrong file" rather than "right file, wrong product" (use
+ * changeUploadProduct for that instead, which is non-destructive).
+ */
+export async function undoUpload(uploadId: string): Promise<{ deletedPurchases: number }> {
+  const admin = createAdminClient();
+
+  const { data: purchases, error } = await admin.from('purchase').select('id').eq('upload_id', uploadId);
+  if (error) throw error;
+  const purchaseIds = (purchases ?? []).map((p) => p.id);
+
+  if (purchaseIds.length > 0) {
+    const { error: unwaiveError } = await admin
+      .from('attendance_record')
+      .update({ waived_by_purchase_id: null })
+      .in('waived_by_purchase_id', purchaseIds);
+    if (unwaiveError) throw unwaiveError;
+
+    const { error: deleteError } = await admin.from('purchase').delete().in('id', purchaseIds);
+    if (deleteError) throw deleteError;
+  }
+
+  const { error: deleteUploadError } = await admin.from('purchase_upload').delete().eq('id', uploadId);
+  if (deleteUploadError) throw deleteUploadError;
+
+  return { deletedPurchases: purchaseIds.length };
 }

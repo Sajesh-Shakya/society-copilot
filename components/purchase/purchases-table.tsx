@@ -38,9 +38,13 @@ const MATCH_STATUS_VARIANT: Record<string, "secondary" | "destructive"> = {
 export function PurchasesTable({ purchases }: { purchases: PurchaseRow[] }) {
   const router = useRouter();
   const [showEmails, setShowEmails] = useState(false);
+  const [showOnlyUnmatched, setShowOnlyUnmatched] = useState(false);
   const [isRematching, startRematch] = useTransition();
 
   const unmatchedCount = purchases.filter((p) => p.matchStatus === "unmatched").length;
+  const visiblePurchases = showOnlyUnmatched
+    ? purchases.filter((p) => p.matchStatus === "unmatched")
+    : purchases;
 
   function handleRematch() {
     startRematch(async () => {
@@ -68,6 +72,11 @@ export function PurchasesTable({ purchases }: { purchases: PurchaseRow[] }) {
             {isRematching ? "Re-checking…" : `Re-check ${unmatchedCount} unmatched`}
           </Button>
         )}
+        {unmatchedCount > 0 && (
+          <Button variant="ghost" size="sm" onClick={() => setShowOnlyUnmatched((v) => !v)}>
+            {showOnlyUnmatched ? "Show all" : `Show only unmatched (${unmatchedCount})`}
+          </Button>
+        )}
         <Button variant="ghost" size="sm" onClick={() => setShowEmails((v) => !v)}>
           {showEmails ? "Hide emails" : "Show emails"}
         </Button>
@@ -86,7 +95,7 @@ export function PurchasesTable({ purchases }: { purchases: PurchaseRow[] }) {
             </tr>
           </thead>
           <tbody>
-            {purchases.map((p) => (
+            {visiblePurchases.map((p) => (
               <tr key={p.id} className="border-b-2 border-border">
                 <td className="whitespace-nowrap px-3 py-2">
                   {p.rawPersonName}

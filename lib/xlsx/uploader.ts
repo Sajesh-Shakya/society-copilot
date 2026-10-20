@@ -20,7 +20,7 @@ export interface UploadXlsxResult {
 const productIdSchema = z.string().uuid();
 
 export async function uploadXlsx(formData: FormData): Promise<UploadXlsxResult> {
-  await requireAdmin();
+  const adminUser = await requireAdmin();
 
   const parsedProductId = productIdSchema.safeParse(formData.get("productId"));
   if (!parsedProductId.success) {
@@ -76,7 +76,23 @@ export async function uploadXlsx(formData: FormData): Promise<UploadXlsxResult> 
     };
   }
 
-  const result = await ingestPurchases(rows);
+  // One purchase_upload row per upload -- lets this batch later be
+  // corrected (changeUploadProduct, if the wrong pass was picked above)
+  // or undone (undoUpload, if the whole file was wrong) from the
+  // "recent uploads" list rather than hand-picking individual rows.
+  const { data: upload, error: uploadError } = await admin
+    .from("purchase_upload")
+    .insert({
+      product_id: product.id,
+      filename: file.name,
+      row_count: rows.length,
+      uploaded_by: adminUser.email,
+    })
+    .select("id")
+    .single();
+  if (uploadError) throw uploadError;
+
+  const result = await ingestPurchases(rows.map((row) => ({ ...row, uploadId: upload.id })));
 
   const skippedNote = skipped > 0 ? ` (${skipped} skipped as invalid)` : "";
 

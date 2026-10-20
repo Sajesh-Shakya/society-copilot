@@ -13,6 +13,12 @@ export interface RawPurchaseRow {
   // ignored by ingestPurchases whenever productId is present.
   productId?: string;
   productName?: string;
+  // Which upload batch this row came from (lib/xlsx/uploader.ts creates
+  // one purchase_upload row per XLSX upload) -- lets an admin later
+  // change the product the whole batch was recorded against, or undo it
+  // entirely. Undefined for the Pluto API path, which has no batch
+  // concept.
+  uploadId?: string;
   purchasedAt: Date;
   source: 'pluto_api' | 'xlsx_upload';
 }
@@ -37,6 +43,7 @@ export function isStudentMemberType(memberType: string): boolean {
 export interface PurchaseRecord {
   personId: string | null;
   productId: string;               // must exist in db
+  uploadId: string | null;
   source: 'pluto_api' | 'xlsx_upload';
   sourceRowId: string;
   rawMemberType: string;

@@ -4,7 +4,9 @@ import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { XlsxUploader } from '@/components/purchase/xlsx-uploader';
 import { PurchasesTable, type PurchaseRow } from '@/components/purchase/purchases-table';
+import { RecentUploads } from '@/components/purchase/recent-uploads';
 import { listProducts } from '@/lib/purchase/queries';
+import { listRecentUploads } from '@/lib/purchase/interface';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +19,7 @@ export default async function AdminPurchasesPage() {
   }
 
   const admin = createAdminClient();
-  const [{ data: rawPurchases }, products] = await Promise.all([
+  const [{ data: rawPurchases }, products, recentUploads] = await Promise.all([
     admin
       .from('purchase')
       .select(
@@ -26,6 +28,7 @@ export default async function AdminPurchasesPage() {
       .order('purchased_at', { ascending: false })
       .limit(20),
     listProducts(),
+    listRecentUploads(5),
   ]);
 
   const purchases: PurchaseRow[] = (rawPurchases ?? []).map((p) => {
@@ -64,6 +67,9 @@ export default async function AdminPurchasesPage() {
         </p>
         <div className="mt-4">
           <XlsxUploader products={products} />
+        </div>
+        <div className="mt-6">
+          <RecentUploads uploads={recentUploads} products={products} />
         </div>
       </div>
 
