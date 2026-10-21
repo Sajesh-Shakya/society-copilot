@@ -1,0 +1,17 @@
+-- Migration: grant authenticated SELECT on attendance_record.
+--
+-- Found investigating "two admins ticking attendance never sync live
+-- without a refresh": the realtime publication was enabled for
+-- attendance_record (20261013000000), and an RLS policy
+-- (attendance_record_select_authenticated_admin, admin-allowlist-gated)
+-- already existed to scope what an authenticated client may see -- but
+-- the base GRANT SELECT to the `authenticated` role was never actually
+-- issued. In Postgres, an RLS policy only narrows which ROWS a role can
+-- see among those it's otherwise permitted to query; without the
+-- underlying GRANT, the role can't query the table at all, policy or no
+-- policy. This applies to the browser's realtime subscription
+-- (components/attendance/attendance-screen.tsx, connecting as
+-- `authenticated`) exactly as much as a hypothetical direct SELECT would
+-- -- Realtime silently delivered zero events the whole time, with no
+-- error anywhere to surface it.
+grant select on public.attendance_record to authenticated;

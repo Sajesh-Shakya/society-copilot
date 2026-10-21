@@ -19,25 +19,54 @@ test.describe("purchase upload batches", () => {
   let purchaseIds: string[] = [];
 
   test.afterEach(async () => {
+    // attendance_record must be cleared before purchase is deleted --
+    // applyWaivers/changeUploadProduct may have set
+    // attendance_record.waived_by_purchase_id to one of these purchases,
+    // and that FK blocks deleting purchase first. Every delete below
+    // checks its error and throws -- without that, a blocked delete here
+    // silently leaves orphaned purchase/purchase_upload/product rows in
+    // the live database (this exact bug previously left several "Test
+    // Upload Pass"/"Test Rematch Pass" rows live and undetected).
+    if (sessionIds.length > 0) {
+      const { error: attendanceDeleteError } = await admin
+        .from("attendance_record")
+        .delete()
+        .in("session_id", sessionIds);
+      if (attendanceDeleteError) {
+        throw new Error(`Cleanup failed deleting attendance_record: ${attendanceDeleteError.message}`);
+      }
+      const { error: sessionDeleteError } = await admin.from("session").delete().in("id", sessionIds);
+      if (sessionDeleteError) {
+        throw new Error(`Cleanup failed deleting session: ${sessionDeleteError.message}`);
+      }
+      sessionIds = [];
+    }
     if (purchaseIds.length > 0) {
-      await admin.from("purchase").delete().in("id", purchaseIds);
+      const { error: purchaseDeleteError } = await admin.from("purchase").delete().in("id", purchaseIds);
+      if (purchaseDeleteError) {
+        throw new Error(`Cleanup failed deleting purchase: ${purchaseDeleteError.message}`);
+      }
       purchaseIds = [];
     }
     if (uploadIds.length > 0) {
-      await admin.from("purchase_upload").delete().in("id", uploadIds);
+      const { error: uploadDeleteError } = await admin.from("purchase_upload").delete().in("id", uploadIds);
+      if (uploadDeleteError) {
+        throw new Error(`Cleanup failed deleting purchase_upload: ${uploadDeleteError.message}`);
+      }
       uploadIds = [];
     }
-    if (sessionIds.length > 0) {
-      await admin.from("attendance_record").delete().in("session_id", sessionIds);
-      await admin.from("session").delete().in("id", sessionIds);
-      sessionIds = [];
-    }
     if (productIds.length > 0) {
-      await admin.from("product").delete().in("id", productIds);
+      const { error: productDeleteError } = await admin.from("product").delete().in("id", productIds);
+      if (productDeleteError) {
+        throw new Error(`Cleanup failed deleting product: ${productDeleteError.message}`);
+      }
       productIds = [];
     }
     if (personId) {
-      await admin.from("person").delete().eq("id", personId);
+      const { error: personDeleteError } = await admin.from("person").delete().eq("id", personId);
+      if (personDeleteError) {
+        throw new Error(`Cleanup failed deleting person: ${personDeleteError.message}`);
+      }
       personId = "";
     }
   });

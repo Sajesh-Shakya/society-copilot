@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { uploadXlsx } from "@/lib/xlsx/uploader";
 import { FilePickerButton, type FilePickerButtonHandle } from "@/components/ui/file-picker-button";
 import {
@@ -14,6 +15,7 @@ import { toast } from "sonner";
 import type { ProductListItem } from "@/lib/purchase/queries";
 
 export function XlsxUploader({ products }: { products: ProductListItem[] }) {
+  const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [productId, setProductId] = useState<string>("");
   const pickerRef = useRef<FilePickerButtonHandle>(null);
@@ -28,6 +30,12 @@ export function XlsxUploader({ products }: { products: ProductListItem[] }) {
       .then((result) => {
         if (result.success) {
           toast.success(result.message);
+          // Without this, the new entry in "Recent uploads" and the new
+          // rows in "Recent Purchases" below only appeared after a
+          // manual page reload -- this page's data is server-rendered,
+          // so a client-side mutation needs an explicit refresh to show
+          // up at all, same admin or not.
+          router.refresh();
         } else {
           toast.error(result.message);
         }
