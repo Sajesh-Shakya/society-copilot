@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { randomUUID } from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getOutstandingDebt } from "@/lib/debt/calculator";
-import { applyWaivers } from "@/lib/purchase/interface";
+import { applyWaivers, reapplyWaiversForPerson } from "@/lib/purchase/interface";
 
 const admin = createAdminClient();
 
@@ -291,5 +291,122 @@ test.describe("applyWaivers", () => {
     // no applyWaivers call needed for the within-window session to
     // disappear from debt.
     expect(await getOutstandingDebt(personId)).toBe(1); // only the post-cutoff session
+  });
+});
+
+test.describe("reapplyWaiversForPerson", () => {
+  let personId = "";
+  let sessionIds: string[] = [];
+  let productId: string | undefined;
+  let purchaseId: string | undefined;
+
+  test.afterEach(async () => {
+    if (sessionIds.length > 0) {
+      const { error: attendanceDeleteError } = await admin
+        .from("attendance_record")
+        .delete()
+        .in("session_id", sessionIds);
+      if (attendanceDeleteError) throw new Error(`Cleanup failed: ${attendanceDeleteError.message}`);
+      const { error: sessionDeleteError } = await admin.from("session").delete().in("id", sessionIds);
+      if (sessionDeleteError) throw new Error(`Cleanup failed: ${sessionDeleteError.message}`);
+      sessionIds = [];
+    }
+    if (purchaseId) {
+      const { error } = await admin.from("purchase").delete().eq("id", purchaseId);
+      if (error) throw new Error(`Cleanup failed: ${error.message}`);
+      purchaseId = undefined;
+    }
+    if (productId) {
+      const { error } = await admin.from("product").delete().eq("id", productId);
+      if (error) throw new Error(`Cleanup failed: ${error.message}`);
+      productId = undefined;
+    }
+    if (personId) {
+      const { error } = await admin.from("person").delete().eq("id", personId);
+      if (error) throw new Error(`Cleanup failed: ${error.message}`);
+      personId = "";
+    }
+  });
+
+  async function createPerson(): Promise<string> {
+    const { data, error } = await admin
+      .from("person")
+      .insert({ email: `reapply-test-${randomUUID()}@example.test`, full_name: "Reapply Test Person" })
+      .select("id")
+      .single();
+    if (error || !data) throw new Error(`Failed to create test person: ${error?.message}`);
+    return data.id;
+  }
+
+  async function createAttendance(pid: string, startsAt: string, attended: boolean): Promise<string> {
+    const { data: session, error: sessionError } = await admin
+      .from("session")
+      .insert({ title: "Test Session", starts_at: startsAt })
+      .select("id")
+      .single();
+    if (sessionError || !session) throw new Error(`Failed to create test session: ${sessionError?.message}`);
+    sessionIds.push(session.id);
+    const { error: attendanceError } = await admin
+      .from("attendance_record")
+      .insert({ person_id: pid, session_id: session.id, source: "csv_import", attended });
+    if (attendanceError) throw new Error(`Failed to create test attendance: ${attendanceError.message}`);
+    return session.id;
+  }
+
+  test("catches debt that only appeared AFTER the purchase was already ingested and waived", async () => {
+    personId = await createPerson();
+    await createAttendance(personId, "2026-01-01T18:00:00.000Z", true); // free trial
+
+    // A roster row exists for this session already (e.g. CSV-imported
+    // ahead of time) but hasn't been ticked attended yet -- no debt yet.
+    const debtSessionId = await createAttendance(personId, "2026-01-08T18:00:00.000Z", false);
+    expect(await getOutstandingDebt(personId)).toBe(0);
+
+    // The purchase gets ingested and waived while there's still nothing
+    // to waive -- exactly what happens when a pass is bought before the
+    // admin ticks the roster.
+    const { data: product, error: productError } = await admin
+      .from("product")
+      .insert({ name: `Test Reapply Pass ${randomUUID()}`, kind: "session_pass", covers_sessions: 1 })
+      .select("id")
+      .single();
+    if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
+    productId = product.id;
+
+    const { data: purchase, error: purchaseError } = await admin
+      .from("purchase")
+      .insert({
+        person_id: personId,
+        product_id: productId,
+        source: "xlsx_upload",
+        source_row_id: `reapply-test-${randomUUID()}`,
+        purchased_at: "2026-01-05T00:00:00.000Z",
+        match_status: "cid_matched",
+      })
+      .select("id")
+      .single();
+    if (purchaseError || !purchase) throw new Error(`Failed to create test purchase: ${purchaseError?.message}`);
+    purchaseId = purchase.id;
+
+    expect(await applyWaivers(personId, purchase.id)).toBe(0); // nothing to waive yet
+
+    // The admin ticks the roster afterward -- real debt appears, but
+    // applyWaivers never runs again on its own.
+    await admin.from("attendance_record").update({ attended: true }).eq("session_id", debtSessionId);
+    expect(await getOutstandingDebt(personId)).toBe(1);
+
+    // This is the fix: re-checking the person's existing purchase now
+    // finds and waives the debt that appeared after the fact.
+    const waived = await reapplyWaiversForPerson(personId);
+    expect(waived).toBe(1);
+    expect(await getOutstandingDebt(personId)).toBe(0);
+  });
+
+  test("is a no-op when there is nothing new to waive", async () => {
+    personId = await createPerson();
+    await createAttendance(personId, "2026-01-01T18:00:00.000Z", true); // free trial only
+
+    const waived = await reapplyWaiversForPerson(personId);
+    expect(waived).toBe(0);
   });
 });

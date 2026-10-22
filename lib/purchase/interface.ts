@@ -273,6 +273,42 @@ export async function applyWaivers(personId: string, purchaseId: string): Promis
   return data ?? 0;
 }
 
+/**
+ * Re-checks every purchase already matched to this person for leftover
+ * waiving capacity, against whatever is CURRENTLY outstanding.
+ *
+ * applyWaivers only ever runs once, at the moment a purchase is ingested
+ * -- it waives whatever debt already exists at that instant. If someone
+ * buys a pass before the relevant attendance is actually ticked (the
+ * roster row is inserted at CSV-import time with attended: false, and
+ * doesn't count as debt until an admin ticks it, often hours or days
+ * later), there was nothing to waive yet, and nothing ever re-checks
+ * later. The purchase just sits there having "already been used" for
+ * nothing. See docs/PROJECT_STATUS.md's "stored credit" gap -- this
+ * closes it by re-running applyWaivers for every one of the person's
+ * purchases whenever NEW debt might have just appeared for them (see
+ * call sites in lib/attendance/actions.ts: toggleAttendance,
+ * addExistingPersonToSession, createWalkIn).
+ *
+ * Safe to call liberally: apply_purchase_waiver only ever touches rows
+ * with waived_by_purchase_id is null, up to each purchase's own cap, so
+ * re-running it when there's nothing new to waive is a no-op.
+ */
+export async function reapplyWaiversForPerson(personId: string): Promise<number> {
+  const admin = createAdminClient();
+  const { data: purchases, error } = await admin
+    .from('purchase')
+    .select('id')
+    .eq('person_id', personId);
+  if (error) throw error;
+
+  let totalWaived = 0;
+  for (const p of purchases ?? []) {
+    totalWaived += await applyWaivers(personId, p.id);
+  }
+  return totalWaived;
+}
+
 export interface RematchResult {
   matched: number;
   stillUnmatched: number;

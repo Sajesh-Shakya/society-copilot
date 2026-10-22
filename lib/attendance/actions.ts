@@ -12,6 +12,7 @@ import { syncSessionAttendance } from "@/lib/attendance/sync";
 import { getSessionWithAttendance } from "@/lib/attendance/queries";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
+import { reapplyWaiversForPerson } from "@/lib/purchase/interface";
 
 const provider = new EactivitiesProvider();
 
@@ -125,6 +126,15 @@ export async function toggleAttendance(input: z.infer<typeof toggleSchema>) {
     });
     if (error) throw error;
   }
+
+  // Ticking someone attended can turn a row into fresh outstanding debt
+  // (a CSV-imported roster row starts attended: false, so it's only debt
+  // from this moment on) -- re-check whether any purchase already
+  // matched to this person, bought before this tick, has leftover
+  // capacity to cover it. See reapplyWaiversForPerson's doc comment.
+  if (attended) {
+    await reapplyWaiversForPerson(personId);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +217,8 @@ export async function addExistingPersonToSession(sessionId: string, personId: st
     { onConflict: "person_id,session_id" }
   );
   if (error) throw error;
+
+  await reapplyWaiversForPerson(personId);
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +302,8 @@ export async function createWalkIn(
     { onConflict: "person_id,session_id" }
   );
   if (attendanceError) throw attendanceError;
+
+  await reapplyWaiversForPerson(personId);
 
   return { personId, reusedExisting: !!existing };
 }
