@@ -1,25 +1,25 @@
 import { test, expect } from "@playwright/test";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-// Exercises the same upsert pattern toggleAttendance() uses
-// (lib/attendance/actions.ts) directly against the DB, rather than calling
-// toggleAttendance itself: that function calls requireAdmin() first, which
+// Exercises the real toggle_attendance RPC directly (lib/attendance/
+// actions.ts's toggleAttendance calls this same function) rather than the
+// Server Action itself: that function calls requireAdmin() first, which
 // needs a real Next.js request/cookie context this integration harness
 // doesn't have (see tests/integration/chase-approval.spec.ts for the same
 // split — auth-gated Server Actions aren't unit-testable directly, so the
-// underlying write is verified instead). Task 3.2's verify items are about
-// the UNIQUE(person_id, session_id) + upsert idempotency, which this covers.
+// underlying write is verified instead).
 const admin = createAdminClient();
 
 async function toggle(personId: string, sessionId: string, attended: boolean) {
-  const { error } = await admin.from("attendance_record").upsert(
-    { person_id: personId, session_id: sessionId, attended, source: "manual_tick" },
-    { onConflict: "person_id,session_id" }
-  );
+  const { error } = await admin.rpc("toggle_attendance", {
+    target_person_id: personId,
+    target_session_id: sessionId,
+    target_attended: attended,
+  });
   if (error) throw error;
 }
 
-test.describe("attendance toggle idempotency (AC-2)", () => {
+test.describe("toggle_attendance (AC-2)", () => {
   let sessionId = "";
   let personId = "";
 
@@ -76,5 +76,58 @@ test.describe("attendance toggle idempotency (AC-2)", () => {
 
     expect(count).toBe(1);
     expect(data![0].attended).toBe(false);
+  });
+
+  test("ticking an existing csv_import row preserves its source instead of overwriting it to manual_tick", async () => {
+    const { error } = await admin
+      .from("attendance_record")
+      .insert({ person_id: personId, session_id: sessionId, attended: false, source: "csv_import" });
+    if (error) throw error;
+
+    await toggle(personId, sessionId, true);
+
+    const { data } = await admin
+      .from("attendance_record")
+      .select("source, attended")
+      .eq("person_id", personId)
+      .eq("session_id", sessionId)
+      .single();
+    expect(data!.source).toBe("csv_import");
+    expect(data!.attended).toBe(true);
+  });
+
+  test("a brand-new row from toggling gets source manual_tick", async () => {
+    await toggle(personId, sessionId, true);
+
+    const { data } = await admin
+      .from("attendance_record")
+      .select("source")
+      .eq("person_id", personId)
+      .eq("session_id", sessionId)
+      .single();
+    expect(data!.source).toBe("manual_tick");
+  });
+
+  test("two concurrent ticks of a not-yet-existing row never throw a duplicate-key error and leave exactly one row", async () => {
+    // Simulates two admins both tapping "add" for the same not-yet-on-
+    // the-roster person (e.g. a walk-in) at the same instant -- the old
+    // SELECT-then-branch implementation could have both branches see "no
+    // row" and both attempt an INSERT, with the loser throwing a
+    // duplicate-key error. The atomic INSERT ... ON CONFLICT DO UPDATE
+    // has no such window.
+    await Promise.all([
+      toggle(personId, sessionId, true),
+      toggle(personId, sessionId, true),
+    ]);
+
+    const { data, count } = await admin
+      .from("attendance_record")
+      .select("id, attended, source", { count: "exact" })
+      .eq("person_id", personId)
+      .eq("session_id", sessionId);
+
+    expect(count).toBe(1);
+    expect(data![0].attended).toBe(true);
+    expect(data![0].source).toBe("manual_tick");
   });
 });

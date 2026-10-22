@@ -94,38 +94,27 @@ export async function toggleAttendance(input: z.infer<typeof toggleSchema>) {
   // here. Idempotent per AC-2: toggling to the same value twice is a no-op
   // change.
   //
-  // Supabase-js's .upsert() can't express "don't touch this column on
-  // conflict" -- it always writes every column it's given. Ticking a
-  // csv_import/signup_sync row would therefore unconditionally overwrite
-  // its source to manual_tick, erasing the provenance that's the whole
-  // point of recording a non-manual source. So: look the row up first; an
-  // existing row gets a real UPDATE that only touches attended/
-  // recorded_at (source untouched); only a brand-new row gets source:
-  // "manual_tick".
-  const { data: existing, error: lookupError } = await admin
-    .from("attendance_record")
-    .select("id")
-    .eq("person_id", personId)
-    .eq("session_id", sessionId)
-    .maybeSingle();
-  if (lookupError) throw lookupError;
-
-  if (existing) {
-    const { error } = await admin
-      .from("attendance_record")
-      .update({ attended, recorded_at: new Date().toISOString() })
-      .eq("id", existing.id);
-    if (error) throw error;
-  } else {
-    const { error } = await admin.from("attendance_record").insert({
-      person_id: personId,
-      session_id: sessionId,
-      attended,
-      source: "manual_tick",
-      recorded_at: new Date().toISOString(),
-    });
-    if (error) throw error;
-  }
+  // One atomic RPC, not a SELECT-then-branch: supabase-js's .upsert()
+  // can't express "don't touch this column on conflict" -- it always
+  // writes every column it's given, which would unconditionally overwrite
+  // a csv_import/signup_sync row's source to manual_tick, erasing the
+  // provenance that's the whole point of recording a non-manual source.
+  // A SELECT-then-branch in application code can express that asymmetry
+  // but opens a check-then-act race: two admins ticking the same
+  // not-yet-existing row (e.g. a walk-in) at the same instant can both
+  // see "no row" and both attempt an INSERT, and the unique(person_id,
+  // session_id) constraint makes the loser throw a duplicate-key error
+  // instead of just applying their tick. toggle_attendance (Postgres)
+  // does the insert-or-update in one INSERT ... ON CONFLICT DO UPDATE SET
+  // statement -- source is only ever set by the INSERT's literal value,
+  // never touched by the DO UPDATE, with no window for a second caller to
+  // interleave.
+  const { error } = await admin.rpc("toggle_attendance", {
+    target_person_id: personId,
+    target_session_id: sessionId,
+    target_attended: attended,
+  });
+  if (error) throw error;
 
   // Ticking someone attended can turn a row into fresh outstanding debt
   // (a CSV-imported roster row starts attended: false, so it's only debt
