@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { EactivitiesProvider } from "@/lib/eactivities/provider";
 import type { Attendee } from "@/lib/eactivities/types";
 import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
+import { reapplyWaiversForPerson } from "@/lib/purchase/interface";
 
 export class SessionNotBoundError extends Error {
   constructor(sessionId: string) {
@@ -141,7 +142,15 @@ export async function syncSessionAttendance(
       )
       .select("id");
     if (insertError) throw insertError;
-    if (inserted && inserted.length > 0) attendanceRecordsCreated += 1;
+    if (inserted && inserted.length > 0) {
+      attendanceRecordsCreated += 1;
+      // attendance_record.attended defaults to true (a signup is presumed
+      // attendance -- see the column default), so a genuinely new row
+      // here is immediate debt. Re-check whether any purchase already
+      // matched to this person has leftover capacity to cover it -- same
+      // reasoning as lib/attendance/actions.ts's toggleAttendance.
+      await reapplyWaiversForPerson(personId);
+    }
   }
 
   await admin

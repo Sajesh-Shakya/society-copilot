@@ -309,6 +309,46 @@ export async function reapplyWaiversForPerson(personId: string): Promise<number>
   return totalWaived;
 }
 
+export interface ReapplySweepResult {
+  peopleChecked: number;
+  totalWaived: number;
+}
+
+/**
+ * Safety-net sweep, NOT the primary fix: reapplyWaiversForPerson is
+ * already called at every point in this codebase that can create new
+ * debt (toggleAttendance, addExistingPersonToSession, createWalkIn,
+ * syncSessionAttendance), so this exists to catch whatever a future code
+ * path -- or a bug in one of the existing ones -- might miss, not to
+ * carry the main load. Deliberately NOT a standalone timer/cron (e.g.
+ * "N hours after a session" or "N hours after the last tick"): neither
+ * maps to an actual signal of new debt, both would just delay catching
+ * the same thing the targeted hooks already catch instantly, and picking
+ * a threshold is guesswork a real trigger doesn't need.
+ *
+ * Scoped to active_debt_cycle (the view already used for chase-email
+ * generation) rather than every person in the system -- only people who
+ * currently show outstanding debt are worth re-checking at all, which
+ * keeps this cheap regardless of total person/purchase table size. Meant
+ * to be called from the existing weekly chase-email cron
+ * (app/api/cron/chase-emails/route.ts), immediately before
+ * generateChaseEmails, so anything it catches is resolved before it
+ * could result in an undeserved chase email -- not as a new standalone
+ * schedule.
+ */
+export async function reapplyWaiversForEveryoneWithDebt(): Promise<ReapplySweepResult> {
+  const admin = createAdminClient();
+  const { data: debtors, error } = await admin.from('active_debt_cycle').select('person_id');
+  if (error) throw error;
+
+  let totalWaived = 0;
+  for (const { person_id } of debtors ?? []) {
+    totalWaived += await reapplyWaiversForPerson(person_id);
+  }
+
+  return { peopleChecked: debtors?.length ?? 0, totalWaived };
+}
+
 export interface RematchResult {
   matched: number;
   stillUnmatched: number;

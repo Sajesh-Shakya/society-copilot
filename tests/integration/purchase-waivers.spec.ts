@@ -2,7 +2,11 @@ import { test, expect } from "@playwright/test";
 import { randomUUID } from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getOutstandingDebt } from "@/lib/debt/calculator";
-import { applyWaivers, reapplyWaiversForPerson } from "@/lib/purchase/interface";
+import {
+  applyWaivers,
+  reapplyWaiversForPerson,
+  reapplyWaiversForEveryoneWithDebt,
+} from "@/lib/purchase/interface";
 
 const admin = createAdminClient();
 
@@ -408,5 +412,46 @@ test.describe("reapplyWaiversForPerson", () => {
 
     const waived = await reapplyWaiversForPerson(personId);
     expect(waived).toBe(0);
+  });
+
+  test("reapplyWaiversForEveryoneWithDebt catches the same gap for anyone currently showing debt", async () => {
+    personId = await createPerson();
+    await createAttendance(personId, "2026-01-01T18:00:00.000Z", true); // free trial
+    const debtSessionId = await createAttendance(personId, "2026-01-08T18:00:00.000Z", false); // not ticked yet
+
+    const { data: product, error: productError } = await admin
+      .from("product")
+      .insert({ name: `Test Sweep Pass ${randomUUID()}`, kind: "session_pass", covers_sessions: 1 })
+      .select("id")
+      .single();
+    if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
+    productId = product.id;
+
+    const { data: purchase, error: purchaseError } = await admin
+      .from("purchase")
+      .insert({
+        person_id: personId,
+        product_id: productId,
+        source: "xlsx_upload",
+        source_row_id: `sweep-test-${randomUUID()}`,
+        purchased_at: "2026-01-05T00:00:00.000Z",
+        match_status: "cid_matched",
+      })
+      .select("id")
+      .single();
+    if (purchaseError || !purchase) throw new Error(`Failed to create test purchase: ${purchaseError?.message}`);
+    purchaseId = purchase.id;
+
+    await admin.from("attendance_record").update({ attended: true }).eq("session_id", debtSessionId);
+    expect(await getOutstandingDebt(personId)).toBe(1);
+
+    const result = await reapplyWaiversForEveryoneWithDebt();
+
+    // Tolerant: this sweep is global and may also process other real
+    // debtors in the live project -- only this test's own person is
+    // asserted on directly.
+    expect(result.peopleChecked).toBeGreaterThanOrEqual(1);
+    expect(result.totalWaived).toBeGreaterThanOrEqual(1);
+    expect(await getOutstandingDebt(personId)).toBe(0);
   });
 });
