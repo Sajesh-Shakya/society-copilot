@@ -293,20 +293,21 @@ export async function applyWaivers(personId: string, purchaseId: string): Promis
  * Safe to call liberally: apply_purchase_waiver only ever touches rows
  * with waived_by_purchase_id is null, up to each purchase's own cap, so
  * re-running it when there's nothing new to waive is a no-op.
+ *
+ * One round trip, not one per purchase: the per-purchase loop runs
+ * inside reapply_waivers_for_person (Postgres), not here -- looping in
+ * TypeScript and calling apply_purchase_waiver's RPC once per purchase
+ * would mean N network round trips for a person with N purchases.
  */
 export async function reapplyWaiversForPerson(personId: string): Promise<number> {
   const admin = createAdminClient();
-  const { data: purchases, error } = await admin
-    .from('purchase')
-    .select('id')
-    .eq('person_id', personId);
-  if (error) throw error;
-
-  let totalWaived = 0;
-  for (const p of purchases ?? []) {
-    totalWaived += await applyWaivers(personId, p.id);
+  const { data, error } = await admin.rpc('reapply_waivers_for_person', {
+    target_person_id: personId,
+  });
+  if (error) {
+    throw new Error(`Failed to reapply waivers for person ${personId}: ${error.message}`);
   }
-  return totalWaived;
+  return data ?? 0;
 }
 
 export interface ReapplySweepResult {
@@ -335,18 +336,23 @@ export interface ReapplySweepResult {
  * generateChaseEmails, so anything it catches is resolved before it
  * could result in an undeserved chase email -- not as a new standalone
  * schedule.
+ *
+ * One round trip for the entire sweep: both the per-person and
+ * per-purchase loops run inside reapply_waivers_for_everyone_with_debt
+ * (Postgres), not here -- looping over debtors in TypeScript and calling
+ * reapplyWaiversForPerson's RPC once per person would mean one round
+ * trip per debtor.
  */
 export async function reapplyWaiversForEveryoneWithDebt(): Promise<ReapplySweepResult> {
   const admin = createAdminClient();
-  const { data: debtors, error } = await admin.from('active_debt_cycle').select('person_id');
-  if (error) throw error;
-
-  let totalWaived = 0;
-  for (const { person_id } of debtors ?? []) {
-    totalWaived += await reapplyWaiversForPerson(person_id);
+  const { data, error } = await admin.rpc('reapply_waivers_for_everyone_with_debt');
+  if (error) {
+    throw new Error(`Failed to run the waiver re-check sweep: ${error.message}`);
   }
 
-  return { peopleChecked: debtors?.length ?? 0, totalWaived };
+  const rows = (data ?? []) as { person_id: string; waived: number }[];
+  const totalWaived = rows.reduce((sum, row) => sum + row.waived, 0);
+  return { peopleChecked: rows.length, totalWaived };
 }
 
 export interface RematchResult {
