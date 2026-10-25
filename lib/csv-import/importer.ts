@@ -25,37 +25,61 @@ export interface ImportAttendanceCsvResult {
 type AdminClient = ReturnType<typeof createAdminClient>;
 
 /**
- * Matches a CSV row to an existing person by email (case-insensitive,
- * wildcard-escaped -- see lib/utils.ts's escapeIlikePattern), creating one
- * if none exists. Shared by both the create-new-session and append-to-
- * existing-session import paths so they match/create people identically.
+ * Matches a CSV row to an existing person, creating one if none exists.
+ * Shared by both the create-new-session and append-to-existing-session
+ * import paths so they match/create people identically.
  *
- * Also backfills person.cid from the row's CID/Card Number when the
- * person doesn't already have one -- this is NOT part of identity
- * matching (email alone still decides who a row refers to, unchanged),
- * it's populating a field nothing had ever written for anyone created
- * via CSV import, which otherwise left purchase-record CID matching
- * (lib/purchase/matcher.ts) with nothing to match against. Never
- * overwrites an existing cid -- if one's already recorded (e.g. a real
- * eActivities sync), it's trusted over this row's value.
+ * CID first, then email -- mirrors the priority lib/attendance/sync.ts's
+ * findOrCreatePerson and lib/attendance/actions.ts's createWalkIn already
+ * use. This USED to be email-only (per the 2026-10-09 design doc, written
+ * when the CSV's CID/Card Number column was still considered too
+ * unreliable to match on); that assumption was checked empirically on
+ * 2026-10-16 and found to not hold -- it's reliably a clean 8-digit
+ * Imperial CID once zero-padded. Email-only broke in production exactly
+ * the way CID-only matching would never have: a real person (CID already
+ * on file from an earlier import) signed up again under a different
+ * email, email-only matching correctly found no existing person for that
+ * email and tried to INSERT a new one, and person.cid's unique index
+ * (person_cid_unique_idx, WHERE cid IS NOT NULL) rejected it outright --
+ * aborting the whole import partway through, since this function's
+ * caller writes no transaction boundary around the per-row loop.
+ *
+ * Also backfills person.cid when matched by email and the person doesn't
+ * already have one -- for anyone created via CSV import before CID was
+ * trusted enough to match on, which otherwise left purchase-record CID
+ * matching (lib/purchase/matcher.ts) with nothing to match against.
+ * Never overwrites an existing cid or email -- whichever key found the
+ * match is trusted; the other field a row carries is additional evidence,
+ * not grounds to silently rewrite someone's contact email or override a
+ * previously-confirmed CID.
  */
 async function findOrCreatePersonByEmail(admin: AdminClient, row: AttendeeRow): Promise<string> {
   const email = row.email.toLowerCase();
   const cid = row.rawCidOrCardNumber ? normalizeCid(row.rawCidOrCardNumber) : null;
 
-  const { data: existing, error: lookupError } = await admin
+  if (cid) {
+    const { data: byCid, error: cidLookupError } = await admin
+      .from("person")
+      .select("id")
+      .eq("cid", cid)
+      .maybeSingle();
+    if (cidLookupError) throw cidLookupError;
+    if (byCid) return byCid.id;
+  }
+
+  const { data: byEmail, error: emailLookupError } = await admin
     .from("person")
     .select("id, cid")
     .ilike("email", escapeIlikePattern(email))
     .maybeSingle();
-  if (lookupError) throw lookupError;
+  if (emailLookupError) throw emailLookupError;
 
-  if (existing) {
-    if (cid && !existing.cid) {
-      const { error: backfillError } = await admin.from("person").update({ cid }).eq("id", existing.id);
+  if (byEmail) {
+    if (cid && !byEmail.cid) {
+      const { error: backfillError } = await admin.from("person").update({ cid }).eq("id", byEmail.id);
       if (backfillError) throw backfillError;
     }
-    return existing.id;
+    return byEmail.id;
   }
 
   const { data: created, error: personError } = await admin

@@ -140,7 +140,7 @@ test.describe("importAttendanceCsv", () => {
     expect(personCount).toBe(1);
   });
 
-  test("stores rawCidOrCardNumber on the attendance_record for audit, unused for matching", async () => {
+  test("stores rawCidOrCardNumber on the attendance_record for audit (zero-padded)", async () => {
     const result = await importAttendanceCsv({
       title: "CSV Import Raw CID Test",
       startsAt: "2026-10-15T18:00:00.000Z",
@@ -155,6 +155,54 @@ test.describe("importAttendanceCsv", () => {
       .single();
     expect(record!.raw_cid_or_card_number).toBe("2577809");
     personIds.push(record!.person_id);
+  });
+
+  test("matches an existing person by CID even when the row's email is different, instead of crashing on the unique CID index", async () => {
+    const existingEmail = `csv-import-cid-collision-${crypto.randomUUID()}@example.test`;
+    const cid = String(Math.floor(10_000_000 + Math.random() * 80_000_000));
+    const { data: existing, error } = await admin
+      .from("person")
+      .insert({ full_name: "Existing CID Person", email: existingEmail, cid })
+      .select("id")
+      .single();
+    if (error) throw error;
+    personIds.push(existing.id);
+
+    // Same real person, but this row carries a DIFFERENT email (e.g. they
+    // signed up again under a second address) -- email-only matching
+    // would find no match and try to INSERT a new person with this CID,
+    // which person_cid_unique_idx rejects (two people can't share a real
+    // CID). CID-first matching finds the existing person before that
+    // ever happens.
+    const result = await importAttendanceCsv({
+      title: "CSV Import CID Collision Test",
+      startsAt: "2026-10-15T18:00:00.000Z",
+      rows: [row({ email: `a-completely-different-email-${crypto.randomUUID()}@example.test`, rawCidOrCardNumber: cid })],
+    });
+    sessionIds.push(result.sessionId);
+
+    const { count: personCount } = await admin
+      .from("person")
+      .select("id", { count: "exact", head: true })
+      .eq("cid", cid);
+    expect(personCount).toBe(1); // no duplicate created
+
+    const { data: record } = await admin
+      .from("attendance_record")
+      .select("person_id")
+      .eq("session_id", result.sessionId)
+      .single();
+    expect(record!.person_id).toBe(existing.id);
+
+    // The existing person's own email/full_name must be untouched -- the
+    // row's differing email is evidence, not grounds to overwrite it.
+    const { data: unchangedPerson } = await admin
+      .from("person")
+      .select("email, full_name")
+      .eq("id", existing.id)
+      .single();
+    expect(unchangedPerson!.email).toBe(existingEmail);
+    expect(unchangedPerson!.full_name).toBe("Existing CID Person");
   });
 
   test("a duplicate email within the same file (bypassing the parser's guard) still throws a comprehensible DB error", async () => {

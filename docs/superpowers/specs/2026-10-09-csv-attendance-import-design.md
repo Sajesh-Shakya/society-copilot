@@ -45,15 +45,32 @@ coexist indefinitely; an admin picks whichever currently works.
   event) and is not used for anything in this design. It's read but not
   persisted; the session's real date/time comes only from the admin's form
   input.
-- **Identity matching is email-only.** No CID-based matching, unlike the
-  live-sync path (`lib/attendance/sync.ts`'s `findOrCreatePerson`). Reasons:
-  the CSV's `CID/Card Number` column is ambiguous (sample values are 7
-  digits; Imperial CIDs are documented as 8) and non-student members (BJJ/
-  Judo taster attendees, guests) often have no CID at all. The raw value is
-  stored for audit but never used to look up or merge people. Name
-  (`First Name`/`Surname`) is stored as `full_name` but is not a match key
-  either — email alone decides whether a row is an existing person or a new
-  one.
+- **Identity matching is CID-first, then email** (revised 2026-10-25; see
+  below). Name (`First Name`/`Surname`) is stored as `full_name` but is
+  never a match key.
+
+  **Original decision (2026-10-09), superseded:** email-only, no
+  CID-based matching, unlike the live-sync path
+  (`lib/attendance/sync.ts`'s `findOrCreatePerson`) — reasoning at the
+  time was that the CSV's `CID/Card Number` column looked ambiguous
+  (sample values were 7 digits; Imperial CIDs are documented as 8) and
+  non-student members (BJJ/Judo taster attendees, guests) often have no
+  CID at all.
+
+  **Why it changed:** checked empirically on 2026-10-16 (while fixing
+  unmatched purchase records) and found the CID/Card Number column is in
+  fact reliably a clean 8-digit Imperial CID once zero-padded (Excel/
+  export tooling was dropping the leading zero, not the source data being
+  wrong) — the original "ambiguous" read doesn't hold up. Email-only then
+  broke in production on 2026-10-25 in exactly the way CID-based matching
+  would have prevented: a real person (CID already on file) signed up
+  again under a different email; email-only correctly found no existing
+  person for that *email* and tried to INSERT a new person row; a
+  database-level unique index on `person.cid` correctly rejected the
+  insert (two people can't share one real CID); the whole import aborted
+  partway through with no transaction boundary to roll it back. Non-CID
+  rows (external/non-member guests) are entirely unaffected — CID lookup
+  is simply skipped when the row has none, same as before.
 - **Blank `Attended` column means unknown, not attended.** Every row in the
   real export has this column blank. Rows import with `attended: false`; an
   admin ticks people on the normal attendance screen afterward, same

@@ -1,6 +1,6 @@
 # Project Status — Society Ops Copilot
 
-_Last updated: 2026-10-16. This is a living summary, not a spec. For the
+_Last updated: 2026-10-25. This is a living summary, not a spec. For the
 full rationale behind any decision below, the linked spec/plan docs are
 the source of truth — update this file whenever a decision here goes
 stale, but don't treat it as authoritative over them._
@@ -107,10 +107,22 @@ been unused since the CSV fail-safe took over, and CSV import
 deliberately never wrote it — see its design doc). With nothing to
 CID-match against, nearly every purchase fell through to `unmatched`.
 Both CSV import and the eActivities sync now backfill `person.cid` once
-a person is resolved by email (never overwriting an existing value —
-this doesn't change *how* people are matched/merged during import,
-still email-only; it just stops leaving the field empty for everyone).
-A one-time backfill + re-match was run live against production data.
+a person is resolved (never overwriting an existing value — it just
+stops leaving the field empty for everyone). A one-time backfill +
+re-match was run live against production data.
+
+**Second instance, 2026-10-25:** CSV import's own identity matching was
+*still* email-only at that point (per its original design doc — only the
+backfill above had changed). It broke in production: a real person (CID
+already on file) signed up again under a different email; email-only
+correctly found no match for that email and tried to INSERT a new
+person row with their CID; a DB-level unique index on `person.cid`
+rejected it (two people can't share a CID); the whole CSV import aborted
+partway through, with no transaction boundary to roll back the
+already-created session. Fixed by switching CSV import's matching to
+CID-first-then-email (mirroring the live-sync path and walk-ins, which
+already worked this way) — see the design doc's revision for the full
+account, and `lib/csv-import/importer.ts`'s `findOrCreatePersonByEmail`.
 
 **Pass expiry:** `product.covers_until` is an absolute calendar cutoff
 (added 2026-10-14) — necessary because these passes expire on fixed
@@ -156,9 +168,9 @@ wasn't worth the cost/risk, just the display name mattered).
   2026-10-16: it's reliably a clean 8-digit CID once zero-padding is
   accounted for (Excel numeric cells drop leading zeros — see
   `normalizeCid` in `lib/utils.ts`, applied everywhere a CID is parsed,
-  stored, or compared). CID is now trusted for backfilling and purchase
-  matching, while still **not** being used to merge/match identity during
-  CSV import itself (that stays email-only, unchanged).
+  stored, or compared). CID is now trusted for backfilling, purchase
+  matching, AND CSV-import identity matching itself (CID-first-then-
+  email, since 2026-10-25 — see the "Second instance" note above).
 - **One shared `FilePickerButton` component**
   (`components/ui/file-picker-button.tsx`): three separate upload
   surfaces each independently hand-rolled (and each independently had to
