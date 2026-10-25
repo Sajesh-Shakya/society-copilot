@@ -145,4 +145,32 @@ test.describe("listRecentSessions", () => {
     const newerIndex = results.findIndex((r) => r.id === newerId);
     expect(newerIndex).toBeLessThan(olderIndex);
   });
+
+  test("a session cancelled less than 30 minutes ago still appears, marked cancelled", async () => {
+    const id = await createSession("Recently Cancelled Test Session", new Date());
+    sessionIds.push(id);
+    const { error } = await admin
+      .from("session")
+      .update({ cancelled_at: new Date(Date.now() - 5 * 60 * 1000).toISOString() })
+      .eq("id", id);
+    if (error) throw error;
+
+    const results = await listRecentSessions();
+    const found = results.find((r) => r.id === id);
+    expect(found).toBeDefined();
+    expect(found!.cancelledAt).not.toBeNull();
+  });
+
+  test("a session cancelled more than 30 minutes ago drops off the list", async () => {
+    const id = await createSession("Long-Cancelled Test Session", new Date());
+    sessionIds.push(id);
+    const { error } = await admin
+      .from("session")
+      .update({ cancelled_at: new Date(Date.now() - 31 * 60 * 1000).toISOString() })
+      .eq("id", id);
+    if (error) throw error;
+
+    const results = await listRecentSessions();
+    expect(results.find((r) => r.id === id)).toBeUndefined();
+  });
 });

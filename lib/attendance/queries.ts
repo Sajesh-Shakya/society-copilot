@@ -98,15 +98,25 @@ function isUtcToday(iso: string): boolean {
  * session can be created ahead of its start time), newest-starting first.
  * Server-only read (admin client) -- caller checks admin identity first,
  * same convention as getSessionWithAttendance above.
+ *
+ * A cancelled session keeps showing (struck through, "Cancelled" badge)
+ * for a 30-minute grace period after cancellation -- long enough for the
+ * admin who just cancelled it to see the change took effect, or un-cancel
+ * it if it was a mistake -- then drops off this list entirely. The
+ * session row and its attendance aren't deleted (see setSessionCancelled
+ * in lib/attendance/actions.ts) and the direct /sessions/[id] link still
+ * works indefinitely; only this dashboard listing hides it.
  */
 export async function listRecentSessions(): Promise<SessionListItem[]> {
   const admin = createAdminClient();
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
 
   const { data: sessions, error: sessionsError } = await admin
     .from("session")
     .select("id, title, starts_at, cancelled_at")
     .gte("starts_at", thirtyDaysAgo)
+    .or(`cancelled_at.is.null,cancelled_at.gt.${thirtyMinutesAgo}`)
     .order("starts_at", { ascending: false });
   if (sessionsError) throw sessionsError;
 
