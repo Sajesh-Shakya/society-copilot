@@ -214,7 +214,20 @@ alter table sync_cursor alter column club_id set not null;
 
 - [ ] **Step 2: Apply the migration**
 
-Use `mcp__supabase__apply_migration` with `name: "add_club_id_to_existing_tables"`.
+Before applying, capture current row counts so you have a real before/after comparison (not a stale snapshot from when this plan was written):
+
+```sql
+select
+  (select count(*) from person) as person_total,
+  (select count(*) from session) as session_total,
+  (select count(*) from product) as product_total,
+  (select count(*) from purchase) as purchase_total,
+  (select count(*) from attendance_record) as attendance_total,
+  (select count(*) from chase_email) as chase_email_total,
+  (select count(*) from sync_cursor) as sync_cursor_total;
+```
+
+Record these numbers, then use `mcp__supabase__apply_migration` with `name: "add_club_id_to_existing_tables"`.
 
 - [ ] **Step 3: Verify — every row backfilled, none lost**
 
@@ -233,7 +246,7 @@ select
   (select count(*) from attendance_record) as attendance_total;
 ```
 
-Expected: every `*_null` column is `0`. Expected totals (compare against pre-migration counts, taken 2026-10-31): `person_total = 92`, `session_total = 7`, `purchase_total = 43`, `attendance_total = 147` — if any total is lower than its pre-migration count, rows were lost; stop and investigate before continuing.
+Expected: every `*_null` column is `0`, and every total matches the pre-migration counts you recorded in Step 2 exactly (equal, not just "close") — if any total is lower, rows were lost; stop and investigate before continuing. A total that is *higher* than the Step 2 snapshot (e.g. the live app accepted a new signup in between) is fine — that row must still show `club_id` non-null.
 
 - [ ] **Step 4: Commit**
 
