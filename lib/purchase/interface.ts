@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin';
+import { getDefaultClubId } from '@/lib/supabase/default-club';
 import { RawPurchaseRow, PurchaseRecord, IngestionResult, IngestionError, isStudentMemberType } from './types';
 import { matchOrQueue, matchPersonRecord } from './matcher';
 import { z } from 'zod';
@@ -28,6 +29,7 @@ const rawPurchaseRowSchema = z
 
 export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<IngestionResult> {
   const admin = createAdminClient();
+  const clubId = await getDefaultClubId(admin);
   const errors: IngestionError[] = [];
 
   // Step 1: Validate each row with Zod. Invalid rows are reported as errors
@@ -82,7 +84,7 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
     try {
       const { data: upserted, error: upsertError } = await admin
         .from('product')
-        .upsert({ name: productName, kind: 'other' }, { onConflict: 'name', ignoreDuplicates: true })
+        .upsert({ club_id: clubId, name: productName, kind: 'other' }, { onConflict: 'name', ignoreDuplicates: true })
         .select('id')
         .maybeSingle();
 
@@ -180,6 +182,7 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
       const { data: insertedPurchase, error } = await admin
         .from('purchase')
         .insert({
+          club_id: clubId,
           person_id: purchase.personId,
           product_id: purchase.productId,
           upload_id: purchase.uploadId,
