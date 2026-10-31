@@ -452,3 +452,66 @@ Expected: PASS — every pre-existing integration test (chase, attendance, purch
 - [ ] **Step 3: Record completion**
 
 No commit needed — this task is verification-only. If either run fails, stop and treat it as a regression introduced by Tasks 1–5, not something to patch around in this task.
+
+---
+
+### Task 7 (added mid-execution — ruling, see ledger): Fix pre-existing integration test fixtures for `club_id`
+
+**Why this task exists:** Task 6 found that the full integration suite drops from passing to 82/97 failing with `null value in column "club_id" ... violates not-null constraint`. This is not a defect in Tasks 1–5's migrations — the NOT NULL constraints are correct and intentional. The gap is that 15 pre-existing test files insert directly into `person`/`session`/`product`/`purchase`/`attendance_record`/`chase_email`/`sync_cursor` via the admin client without ever setting `club_id`, because those tables had no such column when those tests were written. This plan's Global Constraint ("no application code changes") was never meant to extend to test fixtures — it was about not touching `app/`/`lib/`/`components/` behavior — and leaving the test suite broken would undermine every later plan that relies on it passing.
+
+**Files:**
+- Modify: `tests/integration/attendance-sync.spec.ts`
+- Modify: `tests/integration/attendance-toggle.spec.ts`
+- Modify: `tests/integration/chase-approval.spec.ts`
+- Modify: `tests/integration/chase-generator.spec.ts`
+- Modify: `tests/integration/chase-queries.spec.ts`
+- Modify: `tests/integration/chase-send.spec.ts`
+- Modify: `tests/integration/csv-import.spec.ts`
+- Modify: `tests/integration/debt-calculation.spec.ts`
+- Modify: `tests/integration/ingest-purchases.spec.ts`
+- Modify: `tests/integration/person-exempt.spec.ts`
+- Modify: `tests/integration/person-search.spec.ts`
+- Modify: `tests/integration/purchase-matcher.spec.ts`
+- Modify: `tests/integration/purchase-upload.spec.ts`
+- Modify: `tests/integration/purchase-waivers.spec.ts`
+- Modify: `tests/integration/session-list.spec.ts`
+- Do NOT modify `tests/integration/multi-tenancy-schema.spec.ts` — it already resolves `club_id` correctly (Task 5).
+
+**Interfaces:**
+- Consumes: the `club` table from Task 1 (row with `slug = 'judo'`).
+- Produces: every direct `.from(<table>).insert(...)` call in the 15 files above includes `club_id` set to the Judo club's id, so every insert satisfies the NOT NULL constraints from Task 4.
+
+- [ ] **Step 1: In each of the 15 files, add a way to resolve the Judo club id once**
+
+At the top of each file (near the existing `const admin = createAdminClient();` line), add:
+
+```ts
+let judoClubId: string;
+test.beforeAll(async () => {
+  const { data, error } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (error) throw error;
+  judoClubId = data.id;
+});
+```
+
+(If a file already has a `test.beforeAll` or `test.describe.configure`, add this resolution inside the existing one rather than creating a second one — read the file first to check.)
+
+- [ ] **Step 2: Add `club_id: judoClubId` to every direct insert into a club-scoped table**
+
+Search each file for `.from("person").insert(`, `.from("session").insert(`, `.from("product").insert(`, `.from("purchase").insert(`, `.from("attendance_record").insert(`, `.from("chase_email").insert(`, `.from("sync_cursor").insert(`, and `.from("purchase_upload").insert(` (check whether `purchase_upload` has its own `club_id` — if the live schema shows it doesn't, skip it and note that in your report). Add `club_id: judoClubId` as a field in the object passed to `.insert(...)`, for every such call, in every one of the 15 files. A batched insert (an array of objects) needs `club_id` added to every object in the array, not just the first.
+
+- [ ] **Step 3: Run the full integration suite**
+
+Run: `npx playwright test --config=playwright.integration.config.ts`
+Expected: PASS, matching (or exceeding) whatever passing count existed before Tasks 1–5 were applied — if you don't know that baseline, the bar is simply: zero failures with `club_id` NOT NULL violations, and no test that previously had nothing to do with `club_id` now fails for an unrelated reason.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add tests/integration/attendance-sync.spec.ts tests/integration/attendance-toggle.spec.ts tests/integration/chase-approval.spec.ts tests/integration/chase-generator.spec.ts tests/integration/chase-queries.spec.ts tests/integration/chase-send.spec.ts tests/integration/csv-import.spec.ts tests/integration/debt-calculation.spec.ts tests/integration/ingest-purchases.spec.ts tests/integration/person-exempt.spec.ts tests/integration/person-search.spec.ts tests/integration/purchase-matcher.spec.ts tests/integration/purchase-upload.spec.ts tests/integration/purchase-waivers.spec.ts tests/integration/session-list.spec.ts
+git commit -m "test: resolve Judo club_id in pre-existing integration test fixtures
+
+Tasks 1-5 made club_id NOT NULL on every club-scoped table. These 15
+test files predate that and insert directly via the admin client
+without it. Fixes the 82/97 integration-suite regression Task 6 found."
+```
