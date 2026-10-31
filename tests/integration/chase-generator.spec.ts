@@ -5,11 +5,19 @@ import { generateChaseEmails } from "@/lib/chase/generator";
 const admin = createAdminClient();
 let sessionIds: string[] = [];
 
+let judoClubId: string;
+test.beforeAll(async () => {
+  const { data, error } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (error) throw error;
+  judoClubId = data.id;
+});
+
 async function createPerson(overrides: { isExempt?: boolean } = {}) {
   const email = `chase-gen-test-${crypto.randomUUID()}@example.test`;
   const { data, error } = await admin
     .from("person")
     .insert({
+      club_id: judoClubId,
       full_name: "Chase Gen Test Person",
       email,
       is_exempt: overrides.isExempt ?? false,
@@ -23,14 +31,14 @@ async function createPerson(overrides: { isExempt?: boolean } = {}) {
 async function createAttendance(personId: string, startsAt: Date) {
   const { data: session, error: sessionError } = await admin
     .from("session")
-    .insert({ title: "Chase Gen Test Session", starts_at: startsAt.toISOString() })
+    .insert({ club_id: judoClubId, title: "Chase Gen Test Session", starts_at: startsAt.toISOString() })
     .select("id")
     .single();
   if (sessionError) throw sessionError;
 
   const { error: attendanceError } = await admin
     .from("attendance_record")
-    .insert({ person_id: personId, session_id: session.id, source: "manual_tick" });
+    .insert({ club_id: judoClubId, person_id: personId, session_id: session.id, source: "manual_tick" });
   if (attendanceError) throw attendanceError;
 
   sessionIds.push(session.id);
@@ -150,6 +158,7 @@ test.describe("generateChaseEmails", () => {
     await createAttendance(personId, new Date(now.getTime() - 20 * 24 * 60 * 60 * 1000));
 
     const { error: insertError } = await admin.from("chase_email").insert({
+      club_id: judoClubId,
       person_id: personId,
       debt_cycle_started_at: new Date(now.getTime() - 20 * 24 * 60 * 60 * 1000).toISOString(),
       sequence_number: 1,
@@ -185,6 +194,7 @@ test.describe("generateChaseEmails", () => {
       await createAttendance(personId, new Date(now.getTime() - 20 * 24 * 60 * 60 * 1000));
 
       const { error: insertError } = await admin.from("chase_email").insert({
+        club_id: judoClubId,
         person_id: personId,
         debt_cycle_started_at: new Date(now.getTime() - 20 * 24 * 60 * 60 * 1000).toISOString(),
         sequence_number: 1,

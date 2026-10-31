@@ -10,6 +10,13 @@ import { POST as syncRoutePost } from "@/app/api/sessions/[sessionId]/sync/route
 
 const admin = createAdminClient();
 
+let judoClubId: string;
+test.beforeAll(async () => {
+  const { data, error } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (error) throw error;
+  judoClubId = data.id;
+});
+
 function fakeProvider(attendees: Attendee[]) {
   let calls = 0;
   return {
@@ -34,6 +41,7 @@ async function createSession(eactivitiesSignupId: string | null, lastSyncedAt: s
   const { data, error } = await admin
     .from("session")
     .insert({
+      club_id: judoClubId,
       title: "Attendance Sync Test Session",
       starts_at: new Date().toISOString(),
       eactivities_signup_id: eactivitiesSignupId,
@@ -142,7 +150,7 @@ test.describe("syncSessionAttendance", () => {
     const email = `attendance-sync-email-${crypto.randomUUID()}@example.test`;
     const { data: existing, error } = await admin
       .from("person")
-      .insert({ full_name: "Existing Person", email, cid: null })
+      .insert({ club_id: judoClubId, full_name: "Existing Person", email, cid: null })
       .select("id")
       .single();
     if (error) throw error;

@@ -3,6 +3,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const admin = createAdminClient();
 
+let judoClubId: string;
+test.beforeAll(async () => {
+  const { data, error } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (error) throw error;
+  judoClubId = data.id;
+});
+
 interface SearchRow {
   id: string;
   full_name: string;
@@ -20,7 +27,7 @@ async function search(query: string): Promise<SearchRow[]> {
 async function createPerson(fullName: string, email: string) {
   const { data, error } = await admin
     .from("person")
-    .insert({ full_name: fullName, email, is_exempt: false })
+    .insert({ club_id: judoClubId, full_name: fullName, email, is_exempt: false })
     .select("id")
     .single();
   if (error) throw error;

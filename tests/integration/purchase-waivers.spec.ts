@@ -10,6 +10,13 @@ import {
 
 const admin = createAdminClient();
 
+let judoClubId: string;
+test.beforeAll(async () => {
+  const { data, error } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (error) throw error;
+  judoClubId = data.id;
+});
+
 test.describe("applyWaivers", () => {
   let personId = "";
   let sessionIds: string[] = [];
@@ -64,7 +71,7 @@ test.describe("applyWaivers", () => {
   async function createPerson(): Promise<string> {
     const { data, error } = await admin
       .from("person")
-      .insert({ email: `waiver-test-${randomUUID()}@example.test`, full_name: "Waiver Test Person" })
+      .insert({ club_id: judoClubId, email: `waiver-test-${randomUUID()}@example.test`, full_name: "Waiver Test Person" })
       .select("id")
       .single();
     if (error || !data) throw new Error(`Failed to create test person: ${error?.message}`);
@@ -74,7 +81,7 @@ test.describe("applyWaivers", () => {
   async function createAttendance(pid: string, startsAt: string): Promise<string> {
     const { data: session, error: sessionError } = await admin
       .from("session")
-      .insert({ title: "Test Session", starts_at: startsAt })
+      .insert({ club_id: judoClubId, title: "Test Session", starts_at: startsAt })
       .select("id")
       .single();
     if (sessionError || !session) throw new Error(`Failed to create test session: ${sessionError?.message}`);
@@ -82,7 +89,7 @@ test.describe("applyWaivers", () => {
 
     const { error: attendanceError } = await admin
       .from("attendance_record")
-      .insert({ person_id: pid, session_id: session.id, source: "manual_tick" });
+      .insert({ club_id: judoClubId, person_id: pid, session_id: session.id, source: "manual_tick" });
     if (attendanceError) throw new Error(`Failed to create test attendance: ${attendanceError.message}`);
 
     return session.id;
@@ -98,7 +105,7 @@ test.describe("applyWaivers", () => {
 
     const { data: product, error: productError } = await admin
       .from("product")
-      .insert({ name: `Test Term Pass ${randomUUID()}`, kind: "term_pass", covers_days: 70 })
+      .insert({ club_id: judoClubId, name: `Test Term Pass ${randomUUID()}`, kind: "term_pass", covers_days: 70 })
       .select("id")
       .single();
     if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
@@ -107,6 +114,7 @@ test.describe("applyWaivers", () => {
     const { data: purchase, error: purchaseError } = await admin
       .from("purchase")
       .insert({
+        club_id: judoClubId,
         person_id: personId,
         product_id: productId,
         source: "xlsx_upload",
@@ -144,7 +152,7 @@ test.describe("applyWaivers", () => {
 
     const { data: product, error: productError } = await admin
       .from("product")
-      .insert({ name: `Test Session Pack ${randomUUID()}`, kind: "session_pass", covers_sessions: 2 })
+      .insert({ club_id: judoClubId, name: `Test Session Pack ${randomUUID()}`, kind: "session_pass", covers_sessions: 2 })
       .select("id")
       .single();
     if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
@@ -153,6 +161,7 @@ test.describe("applyWaivers", () => {
     const { data: purchase, error: purchaseError } = await admin
       .from("purchase")
       .insert({
+        club_id: judoClubId,
         person_id: personId,
         product_id: productId,
         source: "xlsx_upload",
@@ -185,7 +194,7 @@ test.describe("applyWaivers", () => {
 
     const { data: product, error: productError } = await admin
       .from("product")
-      .insert({ name: `Test Term Pass ${randomUUID()}`, kind: "term_pass", covers_days: 70 })
+      .insert({ club_id: judoClubId, name: `Test Term Pass ${randomUUID()}`, kind: "term_pass", covers_days: 70 })
       .select("id")
       .single();
     if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
@@ -194,6 +203,7 @@ test.describe("applyWaivers", () => {
     const { data: purchase, error: purchaseError } = await admin
       .from("purchase")
       .insert({
+        club_id: judoClubId,
         person_id: personId,
         product_id: productId,
         source: "xlsx_upload",
@@ -224,6 +234,7 @@ test.describe("applyWaivers", () => {
     const { data: product, error: productError } = await admin
       .from("product")
       .insert({
+        club_id: judoClubId,
         name: `Test Expiring Session Pack ${randomUUID()}`,
         kind: "session_pass",
         covers_sessions: 5, // generous cap -- covers_until should be the binding limit
@@ -237,6 +248,7 @@ test.describe("applyWaivers", () => {
     const { data: purchase, error: purchaseError } = await admin
       .from("purchase")
       .insert({
+        club_id: judoClubId,
         person_id: personId,
         product_id: productId,
         source: "xlsx_upload",
@@ -266,6 +278,7 @@ test.describe("applyWaivers", () => {
     const { data: product, error: productError } = await admin
       .from("product")
       .insert({
+        club_id: judoClubId,
         name: `Test Expiring Term Pass ${randomUUID()}`,
         kind: "term_pass",
         covers_until: "2026-01-20T00:00:00.000Z",
@@ -278,6 +291,7 @@ test.describe("applyWaivers", () => {
     const { data: purchase, error: purchaseError } = await admin
       .from("purchase")
       .insert({
+        club_id: judoClubId,
         person_id: personId,
         product_id: productId,
         source: "xlsx_upload",
@@ -335,7 +349,7 @@ test.describe("reapplyWaiversForPerson", () => {
   async function createPerson(): Promise<string> {
     const { data, error } = await admin
       .from("person")
-      .insert({ email: `reapply-test-${randomUUID()}@example.test`, full_name: "Reapply Test Person" })
+      .insert({ club_id: judoClubId, email: `reapply-test-${randomUUID()}@example.test`, full_name: "Reapply Test Person" })
       .select("id")
       .single();
     if (error || !data) throw new Error(`Failed to create test person: ${error?.message}`);
@@ -345,14 +359,14 @@ test.describe("reapplyWaiversForPerson", () => {
   async function createAttendance(pid: string, startsAt: string, attended: boolean): Promise<string> {
     const { data: session, error: sessionError } = await admin
       .from("session")
-      .insert({ title: "Test Session", starts_at: startsAt })
+      .insert({ club_id: judoClubId, title: "Test Session", starts_at: startsAt })
       .select("id")
       .single();
     if (sessionError || !session) throw new Error(`Failed to create test session: ${sessionError?.message}`);
     sessionIds.push(session.id);
     const { error: attendanceError } = await admin
       .from("attendance_record")
-      .insert({ person_id: pid, session_id: session.id, source: "csv_import", attended });
+      .insert({ club_id: judoClubId, person_id: pid, session_id: session.id, source: "csv_import", attended });
     if (attendanceError) throw new Error(`Failed to create test attendance: ${attendanceError.message}`);
     return session.id;
   }
@@ -371,7 +385,7 @@ test.describe("reapplyWaiversForPerson", () => {
     // admin ticks the roster.
     const { data: product, error: productError } = await admin
       .from("product")
-      .insert({ name: `Test Reapply Pass ${randomUUID()}`, kind: "session_pass", covers_sessions: 1 })
+      .insert({ club_id: judoClubId, name: `Test Reapply Pass ${randomUUID()}`, kind: "session_pass", covers_sessions: 1 })
       .select("id")
       .single();
     if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
@@ -380,6 +394,7 @@ test.describe("reapplyWaiversForPerson", () => {
     const { data: purchase, error: purchaseError } = await admin
       .from("purchase")
       .insert({
+        club_id: judoClubId,
         person_id: personId,
         product_id: productId,
         source: "xlsx_upload",
@@ -421,7 +436,7 @@ test.describe("reapplyWaiversForPerson", () => {
 
     const { data: product, error: productError } = await admin
       .from("product")
-      .insert({ name: `Test Sweep Pass ${randomUUID()}`, kind: "session_pass", covers_sessions: 1 })
+      .insert({ club_id: judoClubId, name: `Test Sweep Pass ${randomUUID()}`, kind: "session_pass", covers_sessions: 1 })
       .select("id")
       .single();
     if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
@@ -430,6 +445,7 @@ test.describe("reapplyWaiversForPerson", () => {
     const { data: purchase, error: purchaseError } = await admin
       .from("purchase")
       .insert({
+        club_id: judoClubId,
         person_id: personId,
         product_id: productId,
         source: "xlsx_upload",

@@ -9,6 +9,13 @@ import type { AttendeeRow } from "@/lib/csv-import/parser";
 
 const admin = createAdminClient();
 
+let judoClubId: string;
+test.beforeAll(async () => {
+  const { data, error } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (error) throw error;
+  judoClubId = data.id;
+});
+
 function row(overrides: Partial<AttendeeRow> = {}): AttendeeRow {
   return {
     firstName: "Csv",
@@ -89,7 +96,7 @@ test.describe("importAttendanceCsv", () => {
     const email = `csv-import-existing-${crypto.randomUUID()}@example.test`;
     const { data: existing, error } = await admin
       .from("person")
-      .insert({ full_name: "Existing Person", email })
+      .insert({ club_id: judoClubId, full_name: "Existing Person", email })
       .select("id")
       .single();
     if (error) throw error;
@@ -120,7 +127,7 @@ test.describe("importAttendanceCsv", () => {
     const email = `csv-import-case-${crypto.randomUUID()}@example.test`;
     const { data: existing, error } = await admin
       .from("person")
-      .insert({ full_name: "Case Test Person", email })
+      .insert({ club_id: judoClubId, full_name: "Case Test Person", email })
       .select("id")
       .single();
     if (error) throw error;
@@ -162,7 +169,7 @@ test.describe("importAttendanceCsv", () => {
     const cid = String(Math.floor(10_000_000 + Math.random() * 80_000_000));
     const { data: existing, error } = await admin
       .from("person")
-      .insert({ full_name: "Existing CID Person", email: existingEmail, cid })
+      .insert({ club_id: judoClubId, full_name: "Existing CID Person", email: existingEmail, cid })
       .select("id")
       .single();
     if (error) throw error;
@@ -265,7 +272,7 @@ test.describe("syncAttendanceCsv", () => {
   async function newSession(): Promise<string> {
     const { data, error } = await admin
       .from("session")
-      .insert({ title: "Sync CSV Test Session", starts_at: "2026-10-15T18:00:00.000Z" })
+      .insert({ club_id: judoClubId, title: "Sync CSV Test Session", starts_at: "2026-10-15T18:00:00.000Z" })
       .select("id")
       .single();
     if (error) throw error;
@@ -297,13 +304,14 @@ test.describe("syncAttendanceCsv", () => {
 
     const { data: person, error: personError } = await admin
       .from("person")
-      .insert({ full_name: "Already There", email })
+      .insert({ club_id: judoClubId, full_name: "Already There", email })
       .select("id")
       .single();
     if (personError) throw personError;
     personIds.push(person.id);
 
     const { error: recordError } = await admin.from("attendance_record").insert({
+      club_id: judoClubId,
       person_id: person.id,
       session_id: sessionId,
       source: "manual_tick",
@@ -342,7 +350,7 @@ test.describe("syncAttendanceCsv", () => {
     const email = `csv-sync-reuse-${crypto.randomUUID()}@example.test`;
     const { data: existing, error } = await admin
       .from("person")
-      .insert({ full_name: "Existing Person", email })
+      .insert({ club_id: judoClubId, full_name: "Existing Person", email })
       .select("id")
       .single();
     if (error) throw error;
@@ -402,12 +410,13 @@ test.describe("syncAttendanceCsv", () => {
 
     const { data: manualPerson, error: manualError } = await admin
       .from("person")
-      .insert({ full_name: "Manually Added", email: manualEmail })
+      .insert({ club_id: judoClubId, full_name: "Manually Added", email: manualEmail })
       .select("id")
       .single();
     if (manualError) throw manualError;
     personIds.push(manualPerson.id);
     await admin.from("attendance_record").insert({
+      club_id: judoClubId,
       person_id: manualPerson.id,
       session_id: sessionId,
       source: "manual_tick",
@@ -416,12 +425,13 @@ test.describe("syncAttendanceCsv", () => {
 
     const { data: walkInPerson, error: walkInError } = await admin
       .from("person")
-      .insert({ full_name: "Walk In", email: walkInEmail })
+      .insert({ club_id: judoClubId, full_name: "Walk In", email: walkInEmail })
       .select("id")
       .single();
     if (walkInError) throw walkInError;
     personIds.push(walkInPerson.id);
     await admin.from("attendance_record").insert({
+      club_id: judoClubId,
       person_id: walkInPerson.id,
       session_id: sessionId,
       source: "walk_in",
@@ -451,12 +461,13 @@ test.describe("syncAttendanceCsv", () => {
 
     const { data: person, error: personError } = await admin
       .from("person")
-      .insert({ full_name: "Already Attended", email })
+      .insert({ club_id: judoClubId, full_name: "Already Attended", email })
       .select("id")
       .single();
     if (personError) throw personError;
     personIds.push(person.id);
     await admin.from("attendance_record").insert({
+      club_id: judoClubId,
       person_id: person.id,
       session_id: sessionId,
       source: "csv_import",

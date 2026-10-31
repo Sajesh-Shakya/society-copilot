@@ -5,6 +5,13 @@ import { getOutstandingDebt } from "@/lib/debt/calculator";
 
 const admin = createAdminClient();
 
+let judoClubId: string;
+test.beforeAll(async () => {
+  const { data, error } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (error) throw error;
+  judoClubId = data.id;
+});
+
 test.describe("getOutstandingDebt", () => {
   let personId = "";
   let sessionIds: string[] = [];
@@ -55,7 +62,7 @@ test.describe("getOutstandingDebt", () => {
   async function createPerson(): Promise<string> {
     const { data, error } = await admin
       .from("person")
-      .insert({ email: `debt-test-${randomUUID()}@example.test`, full_name: "Debt Test Person" })
+      .insert({ club_id: judoClubId, email: `debt-test-${randomUUID()}@example.test`, full_name: "Debt Test Person" })
       .select("id")
       .single();
     if (error || !data) throw new Error(`Failed to create test person: ${error?.message}`);
@@ -65,7 +72,7 @@ test.describe("getOutstandingDebt", () => {
   async function createAttendance(pid: string, startsAt: string): Promise<string> {
     const { data: session, error: sessionError } = await admin
       .from("session")
-      .insert({ title: "Test Session", starts_at: startsAt })
+      .insert({ club_id: judoClubId, title: "Test Session", starts_at: startsAt })
       .select("id")
       .single();
     if (sessionError || !session) throw new Error(`Failed to create test session: ${sessionError?.message}`);
@@ -73,7 +80,7 @@ test.describe("getOutstandingDebt", () => {
 
     const { error: attendanceError } = await admin
       .from("attendance_record")
-      .insert({ person_id: pid, session_id: session.id, source: "manual_tick" });
+      .insert({ club_id: judoClubId, person_id: pid, session_id: session.id, source: "manual_tick" });
     if (attendanceError) throw new Error(`Failed to create test attendance: ${attendanceError.message}`);
 
     return session.id;
@@ -101,13 +108,14 @@ test.describe("getOutstandingDebt", () => {
 
     const { data: product, error: productError } = await admin
       .from("product")
-      .insert({ name: `Test Term Pass ${randomUUID()}`, kind: "term_pass", covers_days: 70 })
+      .insert({ club_id: judoClubId, name: `Test Term Pass ${randomUUID()}`, kind: "term_pass", covers_days: 70 })
       .select("id")
       .single();
     if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
     productId = product.id;
 
     const { error: purchaseError } = await admin.from("purchase").insert({
+      club_id: judoClubId,
       person_id: personId,
       product_id: productId,
       source: "xlsx_upload",
@@ -127,13 +135,14 @@ test.describe("getOutstandingDebt", () => {
 
     const { data: product, error: productError } = await admin
       .from("product")
-      .insert({ name: `Test Term Pass ${randomUUID()}`, kind: "term_pass", covers_days: 70 })
+      .insert({ club_id: judoClubId, name: `Test Term Pass ${randomUUID()}`, kind: "term_pass", covers_days: 70 })
       .select("id")
       .single();
     if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
     productId = product.id;
 
     const { error: purchaseError } = await admin.from("purchase").insert({
+      club_id: judoClubId,
       person_id: personId,
       product_id: productId,
       source: "xlsx_upload",

@@ -4,11 +4,18 @@ import { countFailedChaseEmails } from "@/lib/chase/queries";
 
 const admin = createAdminClient();
 
+let judoClubId: string;
+test.beforeAll(async () => {
+  const { data, error } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (error) throw error;
+  judoClubId = data.id;
+});
+
 async function createPerson() {
   const email = `chase-queries-test-${crypto.randomUUID()}@example.test`;
   const { data, error } = await admin
     .from("person")
-    .insert({ full_name: "Chase Queries Test Person", email, is_exempt: false })
+    .insert({ club_id: judoClubId, full_name: "Chase Queries Test Person", email, is_exempt: false })
     .select("id")
     .single();
   if (error) throw error;
@@ -19,6 +26,7 @@ async function createChaseEmail(personId: string, status: string) {
   const { data, error } = await admin
     .from("chase_email")
     .insert({
+      club_id: judoClubId,
       person_id: personId,
       debt_cycle_started_at: new Date().toISOString(),
       sequence_number: 1,

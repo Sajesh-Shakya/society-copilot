@@ -11,6 +11,13 @@ import {
 
 const admin = createAdminClient();
 
+let judoClubId: string;
+test.beforeAll(async () => {
+  const { data, error } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (error) throw error;
+  judoClubId = data.id;
+});
+
 test.describe("purchase upload batches", () => {
   let personId = "";
   let sessionIds: string[] = [];
@@ -74,7 +81,7 @@ test.describe("purchase upload batches", () => {
   async function createPerson(): Promise<string> {
     const { data, error } = await admin
       .from("person")
-      .insert({ email: `upload-test-${randomUUID()}@example.test`, full_name: "Upload Test Person" })
+      .insert({ club_id: judoClubId, email: `upload-test-${randomUUID()}@example.test`, full_name: "Upload Test Person" })
       .select("id")
       .single();
     if (error || !data) throw new Error(`Failed to create test person: ${error?.message}`);
@@ -84,14 +91,14 @@ test.describe("purchase upload batches", () => {
   async function createAttendance(pid: string, startsAt: string): Promise<string> {
     const { data: session, error: sessionError } = await admin
       .from("session")
-      .insert({ title: "Test Session", starts_at: startsAt })
+      .insert({ club_id: judoClubId, title: "Test Session", starts_at: startsAt })
       .select("id")
       .single();
     if (sessionError || !session) throw new Error(`Failed to create test session: ${sessionError?.message}`);
     sessionIds.push(session.id);
     const { error: attendanceError } = await admin
       .from("attendance_record")
-      .insert({ person_id: pid, session_id: session.id, source: "manual_tick", attended: true });
+      .insert({ club_id: judoClubId, person_id: pid, session_id: session.id, source: "manual_tick", attended: true });
     if (attendanceError) throw new Error(`Failed to create test attendance: ${attendanceError.message}`);
     return session.id;
   }
@@ -99,7 +106,7 @@ test.describe("purchase upload batches", () => {
   async function createProduct(coversSessions: number): Promise<string> {
     const { data, error } = await admin
       .from("product")
-      .insert({ name: `Test Upload Pass ${randomUUID()}`, kind: "session_pass", covers_sessions: coversSessions })
+      .insert({ club_id: judoClubId, name: `Test Upload Pass ${randomUUID()}`, kind: "session_pass", covers_sessions: coversSessions })
       .select("id")
       .single();
     if (error || !data) throw new Error(`Failed to create test product: ${error?.message}`);
@@ -122,6 +129,7 @@ test.describe("purchase upload batches", () => {
     const { data, error } = await admin
       .from("purchase")
       .insert({
+        club_id: judoClubId,
         person_id: pid,
         product_id: productId,
         upload_id: uploadId,

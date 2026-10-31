@@ -7,6 +7,13 @@ import type { RawPurchaseRow } from "@/lib/purchase/types";
 
 const admin = createAdminClient();
 
+let judoClubId: string;
+test.beforeAll(async () => {
+  const { data, error } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (error) throw error;
+  judoClubId = data.id;
+});
+
 test.describe("ingestPurchases", () => {
   let personId = "";
   let sessionIds: string[] = [];
@@ -66,7 +73,7 @@ test.describe("ingestPurchases", () => {
   async function createPerson(email: string): Promise<string> {
     const { data, error } = await admin
       .from("person")
-      .insert({ email, full_name: "Ingest Test Person" })
+      .insert({ club_id: judoClubId, email, full_name: "Ingest Test Person" })
       .select("id")
       .single();
     if (error || !data) throw new Error(`Failed to create test person: ${error?.message}`);
@@ -76,7 +83,7 @@ test.describe("ingestPurchases", () => {
   async function createAttendance(pid: string, startsAt: string): Promise<string> {
     const { data: session, error: sessionError } = await admin
       .from("session")
-      .insert({ title: "Test Session", starts_at: startsAt })
+      .insert({ club_id: judoClubId, title: "Test Session", starts_at: startsAt })
       .select("id")
       .single();
     if (sessionError || !session) throw new Error(`Failed to create test session: ${sessionError?.message}`);
@@ -84,7 +91,7 @@ test.describe("ingestPurchases", () => {
 
     const { error: attendanceError } = await admin
       .from("attendance_record")
-      .insert({ person_id: pid, session_id: session.id, source: "manual_tick", attended: true });
+      .insert({ club_id: judoClubId, person_id: pid, session_id: session.id, source: "manual_tick", attended: true });
     if (attendanceError) throw new Error(`Failed to create test attendance: ${attendanceError.message}`);
 
     return session.id;
@@ -100,7 +107,7 @@ test.describe("ingestPurchases", () => {
 
     const { data: product, error: productError } = await admin
       .from("product")
-      .insert({ name: `Test Annual Pass ${randomUUID()}`, kind: "annual_pass", covers_days: 365 })
+      .insert({ club_id: judoClubId, name: `Test Annual Pass ${randomUUID()}`, kind: "annual_pass", covers_days: 365 })
       .select("id, name")
       .single();
     if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
@@ -135,7 +142,7 @@ test.describe("ingestPurchases", () => {
 
     const { data: product, error: productError } = await admin
       .from("product")
-      .insert({ name: `Test Annual Pass ${randomUUID()}`, kind: "annual_pass", covers_days: 365 })
+      .insert({ club_id: judoClubId, name: `Test Annual Pass ${randomUUID()}`, kind: "annual_pass", covers_days: 365 })
       .select("id, name")
       .single();
     if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
@@ -170,7 +177,7 @@ test.describe("ingestPurchases", () => {
 
     const { data: product, error: productError } = await admin
       .from("product")
-      .insert({ name: `Test Annual Pass ${randomUUID()}`, kind: "annual_pass", covers_days: 365 })
+      .insert({ club_id: judoClubId, name: `Test Annual Pass ${randomUUID()}`, kind: "annual_pass", covers_days: 365 })
       .select("id")
       .single();
     if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
@@ -278,7 +285,7 @@ test.describe("rematchUnmatchedPurchases", () => {
     // person -- or their CID -- was ever recorded.
     const { data: product, error: productError } = await admin
       .from("product")
-      .insert({ name: `Test Rematch Pass ${randomUUID()}`, kind: "session_pass", covers_sessions: 1 })
+      .insert({ club_id: judoClubId, name: `Test Rematch Pass ${randomUUID()}`, kind: "session_pass", covers_sessions: 1 })
       .select("id")
       .single();
     if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
@@ -287,6 +294,7 @@ test.describe("rematchUnmatchedPurchases", () => {
     const { data: purchase, error: purchaseError } = await admin
       .from("purchase")
       .insert({
+        club_id: judoClubId,
         product_id: productId,
         source: "xlsx_upload",
         source_row_id: `rematch-test-${randomUUID()}`,
@@ -304,7 +312,7 @@ test.describe("rematchUnmatchedPurchases", () => {
     // The person (with the matching CID) only shows up afterward.
     const { data: person, error: personError } = await admin
       .from("person")
-      .insert({ full_name: "Rematch Test Person", email: `rematch-test-${randomUUID()}@example.test`, cid })
+      .insert({ club_id: judoClubId, full_name: "Rematch Test Person", email: `rematch-test-${randomUUID()}@example.test`, cid })
       .select("id")
       .single();
     if (personError || !person) throw new Error(`Failed to create test person: ${personError?.message}`);
@@ -315,25 +323,25 @@ test.describe("rematchUnmatchedPurchases", () => {
     // to be any actual debt for the purchase to waive.
     const { data: freeSession, error: freeSessionError } = await admin
       .from("session")
-      .insert({ title: "Test Session (free trial)", starts_at: "2026-01-01T18:00:00.000Z" })
+      .insert({ club_id: judoClubId, title: "Test Session (free trial)", starts_at: "2026-01-01T18:00:00.000Z" })
       .select("id")
       .single();
     if (freeSessionError || !freeSession) throw new Error(`Failed to create test session: ${freeSessionError?.message}`);
     sessionIds.push(freeSession.id);
     await admin
       .from("attendance_record")
-      .insert({ person_id: personId, session_id: freeSession.id, source: "manual_tick", attended: true });
+      .insert({ club_id: judoClubId, person_id: personId, session_id: freeSession.id, source: "manual_tick", attended: true });
 
     const { data: session, error: sessionError } = await admin
       .from("session")
-      .insert({ title: "Test Session (debt)", starts_at: "2026-01-08T18:00:00.000Z" })
+      .insert({ club_id: judoClubId, title: "Test Session (debt)", starts_at: "2026-01-08T18:00:00.000Z" })
       .select("id")
       .single();
     if (sessionError || !session) throw new Error(`Failed to create test session: ${sessionError?.message}`);
     sessionIds.push(session.id);
     await admin
       .from("attendance_record")
-      .insert({ person_id: personId, session_id: session.id, source: "manual_tick", attended: true });
+      .insert({ club_id: judoClubId, person_id: personId, session_id: session.id, source: "manual_tick", attended: true });
 
     const before = await admin.from("purchase").select("match_status, person_id").eq("id", purchaseId).single();
     expect(before.data!.match_status).toBe("unmatched");
@@ -358,7 +366,7 @@ test.describe("rematchUnmatchedPurchases", () => {
   test("a purchase with no matching person stays unmatched and is reported as such", async () => {
     const { data: product, error: productError } = await admin
       .from("product")
-      .insert({ name: `Test Rematch Pass ${randomUUID()}`, kind: "session_pass", covers_sessions: 1 })
+      .insert({ club_id: judoClubId, name: `Test Rematch Pass ${randomUUID()}`, kind: "session_pass", covers_sessions: 1 })
       .select("id")
       .single();
     if (productError || !product) throw new Error(`Failed to create test product: ${productError?.message}`);
@@ -367,6 +375,7 @@ test.describe("rematchUnmatchedPurchases", () => {
     const { data: purchase, error: purchaseError } = await admin
       .from("purchase")
       .insert({
+        club_id: judoClubId,
         product_id: productId,
         source: "xlsx_upload",
         source_row_id: `rematch-test-${randomUUID()}`,

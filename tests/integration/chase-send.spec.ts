@@ -6,11 +6,18 @@ import type { EmailChannelAdapter } from "@/lib/email/types";
 const admin = createAdminClient();
 let sessionIds: string[] = [];
 
+let judoClubId: string;
+test.beforeAll(async () => {
+  const { data, error } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (error) throw error;
+  judoClubId = data.id;
+});
+
 async function createPerson() {
   const email = `chase-send-test-${crypto.randomUUID()}@example.test`;
   const { data, error } = await admin
     .from("person")
-    .insert({ full_name: "Chase Send Test Person", email, is_exempt: false })
+    .insert({ club_id: judoClubId, full_name: "Chase Send Test Person", email, is_exempt: false })
     .select("id")
     .single();
   if (error) throw error;
@@ -20,13 +27,13 @@ async function createPerson() {
 async function createAttendance(personId: string, startsAt: Date) {
   const { data: session, error: sessionError } = await admin
     .from("session")
-    .insert({ title: "Chase Send Test Session", starts_at: startsAt.toISOString() })
+    .insert({ club_id: judoClubId, title: "Chase Send Test Session", starts_at: startsAt.toISOString() })
     .select("id")
     .single();
   if (sessionError) throw sessionError;
   const { error: attendanceError } = await admin
     .from("attendance_record")
-    .insert({ person_id: personId, session_id: session.id, source: "manual_tick" });
+    .insert({ club_id: judoClubId, person_id: personId, session_id: session.id, source: "manual_tick" });
   if (attendanceError) throw attendanceError;
   sessionIds.push(session.id);
   return session.id as string;
@@ -36,6 +43,7 @@ async function createApprovedChaseEmail(personId: string, sequenceNumber = 1) {
   const { data, error } = await admin
     .from("chase_email")
     .insert({
+      club_id: judoClubId,
       person_id: personId,
       debt_cycle_started_at: new Date().toISOString(),
       sequence_number: sequenceNumber,

@@ -10,6 +10,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // underlying write is verified instead).
 const admin = createAdminClient();
 
+let judoClubId: string;
+test.beforeAll(async () => {
+  const { data, error } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (error) throw error;
+  judoClubId = data.id;
+});
+
 async function toggle(personId: string, sessionId: string, attended: boolean) {
   const { error } = await admin.rpc("toggle_attendance", {
     target_person_id: personId,
@@ -27,6 +34,7 @@ test.describe("toggle_attendance (AC-2)", () => {
     const { data: person, error: personError } = await admin
       .from("person")
       .insert({
+        club_id: judoClubId,
         full_name: "Toggle Test Person",
         email: `attendance-toggle-test-${crypto.randomUUID()}@example.test`,
       })
@@ -37,7 +45,7 @@ test.describe("toggle_attendance (AC-2)", () => {
 
     const { data: session, error: sessionError } = await admin
       .from("session")
-      .insert({ title: "Toggle Test Session", starts_at: new Date().toISOString() })
+      .insert({ club_id: judoClubId, title: "Toggle Test Session", starts_at: new Date().toISOString() })
       .select("id")
       .single();
     if (sessionError) throw sessionError;
@@ -81,7 +89,7 @@ test.describe("toggle_attendance (AC-2)", () => {
   test("ticking an existing csv_import row preserves its source instead of overwriting it to manual_tick", async () => {
     const { error } = await admin
       .from("attendance_record")
-      .insert({ person_id: personId, session_id: sessionId, attended: false, source: "csv_import" });
+      .insert({ club_id: judoClubId, person_id: personId, session_id: sessionId, attended: false, source: "csv_import" });
     if (error) throw error;
 
     await toggle(personId, sessionId, true);

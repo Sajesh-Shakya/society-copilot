@@ -6,6 +6,13 @@ import type { RawPurchaseRow } from "@/lib/purchase/types";
 
 const admin = createAdminClient();
 
+let judoClubId: string;
+test.beforeAll(async () => {
+  const { data, error } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (error) throw error;
+  judoClubId = data.id;
+});
+
 function row(overrides: Partial<RawPurchaseRow> = {}): RawPurchaseRow {
   return {
     externalId: `matcher-test-${randomUUID()}`,
@@ -31,7 +38,7 @@ test.describe("matchPersonRecord", () => {
   async function createPerson(fields: { cid?: string; email?: string; fullName: string }): Promise<string> {
     const { data, error } = await admin
       .from("person")
-      .insert({ full_name: fields.fullName, email: fields.email ?? `matcher-${randomUUID()}@example.test`, cid: fields.cid ?? null })
+      .insert({ club_id: judoClubId, full_name: fields.fullName, email: fields.email ?? `matcher-${randomUUID()}@example.test`, cid: fields.cid ?? null })
       .select("id")
       .single();
     if (error || !data) throw new Error(`Failed to create test person: ${error?.message}`);

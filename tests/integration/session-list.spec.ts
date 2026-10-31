@@ -4,10 +4,17 @@ import { listRecentSessions } from "@/lib/attendance/queries";
 
 const admin = createAdminClient();
 
+let judoClubId: string;
+test.beforeAll(async () => {
+  const { data, error } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (error) throw error;
+  judoClubId = data.id;
+});
+
 async function createSession(title: string, startsAt: Date) {
   const { data, error } = await admin
     .from("session")
-    .insert({ title, starts_at: startsAt.toISOString() })
+    .insert({ club_id: judoClubId, title, starts_at: startsAt.toISOString() })
     .select("id")
     .single();
   if (error) throw error;
@@ -18,6 +25,7 @@ async function createPerson() {
   const { data, error } = await admin
     .from("person")
     .insert({
+      club_id: judoClubId,
       full_name: "Session List Test Person",
       email: `session-list-test-${crypto.randomUUID()}@example.test`,
       is_exempt: false,
@@ -119,11 +127,11 @@ test.describe("listRecentSessions", () => {
 
     const { error: attendedError } = await admin
       .from("attendance_record")
-      .insert({ person_id: attendedPersonId, session_id: sessionId, source: "manual_tick", attended: true });
+      .insert({ club_id: judoClubId, person_id: attendedPersonId, session_id: sessionId, source: "manual_tick", attended: true });
     if (attendedError) throw attendedError;
     const { error: notAttendedError } = await admin
       .from("attendance_record")
-      .insert({ person_id: notAttendedPersonId, session_id: sessionId, source: "manual_tick", attended: false });
+      .insert({ club_id: judoClubId, person_id: notAttendedPersonId, session_id: sessionId, source: "manual_tick", attended: false });
     if (notAttendedError) throw notAttendedError;
 
     const results = await listRecentSessions();
