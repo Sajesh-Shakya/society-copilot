@@ -88,10 +88,14 @@ export async function requireAdmin(clubSlug: string): Promise<{ email: string; c
 
 Every existing call site changes from `requireAdmin()` to `requireAdmin(clubSlug)`, with `clubSlug` threaded from the page's route param through to the Server Action call. This preserves the existing "re-check on every privileged call" property — the enforcement point stays inside each Server Action, not a layout-level guard.
 
-**Post-login** (`app/auth/callback/route.ts`): look up all `admin` rows for the signed-in email.
+**Sign-in is password-based, not magic-link** — correcting an earlier mistake in this doc. `components/auth/login-form.tsx` posts email+password to `signIn()` in `lib/auth/actions.ts`, which calls `supabase.auth.signInWithPassword` and redirects on success. There's no self-service signup: accounts are provisioned out-of-band via `scripts/create-admin.ts`, which generates a strong random password, creates the Supabase Auth user, and prints the password once for sharing out-of-band (in person, group chat — never by email). `app/auth/callback/route.ts` is vestigial from an earlier OAuth-code-exchange approach and isn't part of the real login path; this spec doesn't touch it.
+
+**Post-sign-in redirect**: after `signIn()` succeeds, look up all `admin` rows for the signed-in email instead of redirecting straight to `/sessions`.
 - Exactly 1 club → redirect to `/club/[slug]/sessions`.
 - 0 clubs → unauthorized page, as today.
 - \>1 club → new small picker page (`app/select-club/page.tsx`) listing their clubs.
+
+**`scripts/create-admin.ts` becomes club-aware**: takes a club slug as a second argument (`node scripts/create-admin.ts <email> <club-slug>`), resolves the club, and upserts into `admin(email, club_id)` instead of `admin_allowlist(email)`. The existing one-account-per-person pattern and the "one shared account for a whole committee" pattern (e.g. a single `icutdk@imperial.ac.uk` login used by multiple Taekwondo committee members) are both just rows in this table — the schema doesn't distinguish them. Worth noting: a shared account weakens the audit trail (`chase_email.approved_by` would show the same email for every approval from that club, regardless of which person actually clicked approve) — acceptable for a small club that doesn't need per-person accountability, but not a drop-in replacement for individual accounts if that ever matters.
 
 ## Query-scoping guardrail
 
