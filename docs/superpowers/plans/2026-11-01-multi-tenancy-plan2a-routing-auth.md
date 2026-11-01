@@ -350,9 +350,13 @@ test.describe("createClubScopedClient", () => {
     const taekwondo = await clubId("taekwondo");
     const scoped = createClubScopedClient(judo);
 
-    await expect(
+    // insert's club_id guard throws synchronously (it's a programmer-error
+    // assertion, not a soft/awaitable failure -- see the design note in
+    // club-scoped.ts), so this is a plain synchronous throw check, not
+    // `.rejects`, which needs a Promise to attach to.
+    expect(() =>
       scoped.from("person").insert({ club_id: taekwondo, full_name: "X", email: `x-${crypto.randomUUID()}@example.test` })
-    ).rejects.toThrow();
+    ).toThrow();
   });
 
   test("update is scoped to the caller's club and cannot change club_id", async () => {
@@ -373,11 +377,11 @@ test.describe("createClubScopedClient", () => {
     const { data: unchanged } = await admin.from("person").select("full_name").eq("id", inserted.data!.id).single();
     expect(unchanged!.full_name).toBe("Before");
 
-    // Trying to move the row to another club is rejected outright.
+    // Trying to move the row to another club is rejected outright. update's
+    // club_id guard throws synchronously, before .eq() is ever reached, so
+    // this is a plain synchronous throw check, not `.rejects`.
     const scopedAsJudo = createClubScopedClient(judo);
-    await expect(
-      scopedAsJudo.from("person").update({ club_id: taekwondo }).eq("id", inserted.data!.id)
-    ).rejects.toThrow();
+    expect(() => scopedAsJudo.from("person").update({ club_id: taekwondo })).toThrow();
   });
 });
 ```
