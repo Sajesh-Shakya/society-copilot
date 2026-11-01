@@ -15,6 +15,7 @@
 - No business-logic query in `lib/attendance`, `lib/purchase`, `lib/chase`, `lib/csv-import`, `lib/person` gets converted to club-scoping in this plan — only its Server Action entry point gains a `clubSlug` parameter and calls `requireAdmin(clubSlug)`. The query itself still runs through the existing `createAdminClient()` / the hotfix's `getDefaultClubId()`, exactly as today.
 - Never accept a raw `clubId` from a client component or form field — only a `clubSlug`, re-verified by `requireAdmin(clubSlug)` server-side on every call.
 - `requireAdmin`'s unauthorized error message must be byte-identical whether the club slug doesn't exist or the signed-in email isn't an admin of it — never let the error reveal which club slugs are valid.
+- `signIn()`'s error message must be byte-identical whether the password is wrong, the email doesn't exist, or the login is valid but the account has no admin-club access — a distinct message for "valid credentials, no access" is a credential-validation oracle (confirms a guessed password is correct even when it grants nothing). A background security review found this violated in an earlier version of Task 5's code; fixed and documented in the ledger.
 - `admin_allowlist` is not dropped, not modified structurally. `scripts/create-admin.ts` keeps writing to it alongside the new `admin` table.
 - No Taekwondo `admin` row gets created as part of this plan or its testing — only Judo admins exist until Plan 2b's cross-tenant tests pass.
 - `app/api/sessions/[sessionId]/sync/route.ts` is explicitly **out of scope** for this plan — it requires no changes. It's machine-authenticated (`SYNC_TRIGGER_SECRET`), not admin-session-gated, and stays exactly where it is; deriving its club from `session.club_id` only becomes meaningful once `syncSessionAttendance` itself is club-aware, which is Plan 2b's job. Do not move it under `/api/club/[clubSlug]/...` and do not add any club check to it in this plan.
@@ -739,14 +740,23 @@ export async function signIn(rawEmail: string, rawPassword: string): Promise<{ e
     email: parsed.data.email.toLowerCase(),
     password: parsed.data.password,
   });
+  // Same generic message for a wrong password AND a valid login with no
+  // admin access -- a distinct message for the latter would let an
+  // attacker confirm a guessed password is correct for a real account
+  // even without admin access (a credential-validation oracle), exactly
+  // what signInWithPassword's own uniform error already avoids for the
+  // email-doesn't-exist case. (Fixed post-review by a background security
+  // scan on commit 3aef6cd -- the original version of this task used two
+  // different messages here. See this plan's ledger.)
+  const INVALID_CREDENTIALS = "Invalid email or password.";
   if (error) {
-    return { error: "Invalid email or password." };
+    return { error: INVALID_CREDENTIALS };
   }
 
   const clubs = await listAdminClubs(parsed.data.email.toLowerCase());
   if (clubs.length === 0) {
     await supabase.auth.signOut();
-    return { error: "This account isn't an admin of any club." };
+    return { error: INVALID_CREDENTIALS };
   }
   if (clubs.length === 1) {
     redirect(clubPath(clubs[0].slug, "/sessions"));
