@@ -1,20 +1,12 @@
-// One-off admin account provisioning — run manually, not exposed via the app
-// (no self-service signup, per docs/superpowers/specs/2026-09-19-admin-auth-design.md
-// and the 2026-09-22 switch to password auth: this project's admin list is
-// small and fixed, so accounts are created out-of-band by someone who already
-// has SUPABASE_SECRET_KEY, not through a public registration flow).
+// One-off admin account provisioning -- run manually, not exposed via the
+// app. Usage: node scripts/create-admin.ts <email> <club-slug>
 //
-// Usage:
-//   node scripts/create-admin.ts someone@ic.ac.uk
-//
-// Requires SUPABASE_SECRET_KEY and NEXT_PUBLIC_SUPABASE_URL in .env.local (or
-// the environment). Generates a strong random password, creates the
-// Supabase Auth user with email_confirm: true (no confirmation email — the
-// whole point is avoiding a dependency on Imperial's mail deliverability),
-// and adds the email to admin_allowlist if it isn't already there. Prints
-// the password once — share it out-of-band (in person, group chat), never
-// by email. If the account already exists, use the Supabase dashboard
-// (Authentication -> Users -> reset password) instead of this script.
+// Requires SUPABASE_SECRET_KEY and NEXT_PUBLIC_SUPABASE_URL in .env.local.
+// Generates a strong random password for a NEW auth user (email_confirm:
+// true, no confirmation email). If the auth user already exists, this is
+// now a normal case -- it just adds the admin(email, club_id) row for the
+// new club and prints no new password. Also upserts admin_allowlist, kept
+// alongside admin as a rollback path for this release.
 
 import { randomBytes } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
@@ -29,13 +21,14 @@ if (!supabaseUrl) throw new Error("NEXT_PUBLIC_SUPABASE_URL is not set");
 if (!secretKey) throw new Error("SUPABASE_SECRET_KEY is not set");
 
 const email = process.argv[2]?.trim().toLowerCase();
-if (!email || !email.includes("@")) {
-  console.error("Usage: node scripts/create-admin.ts <email>");
+const clubSlug = process.argv[3]?.trim().toLowerCase();
+if (!email || !email.includes("@") || !clubSlug) {
+  console.error("Usage: node scripts/create-admin.ts <email> <club-slug>");
   process.exit(1);
 }
 
 function generatePassword(): string {
-  return randomBytes(18).toString("base64url"); // 24 chars, ~144 bits
+  return randomBytes(18).toString("base64url");
 }
 
 async function main() {
@@ -43,36 +36,55 @@ async function main() {
     auth: { persistSession: false },
   });
 
-  const password = generatePassword();
+  const { data: club, error: clubError } = await admin
+    .from("club")
+    .select("id")
+    .eq("slug", clubSlug!)
+    .maybeSingle();
+  if (clubError) {
+    console.error(`Failed to look up club "${clubSlug}": ${clubError.message}`);
+    process.exit(1);
+  }
+  if (!club) {
+    console.error(`Unknown club slug: "${clubSlug}"`);
+    process.exit(1);
+  }
 
+  const password = generatePassword();
   const { error: createError } = await admin.auth.admin.createUser({
-    email,
+    email: email!,
     password,
-    email_confirm: true, // no confirmation email
+    email_confirm: true,
   });
 
-  if (createError) {
+  if (createError && createError.code !== "email_exists") {
     console.error(`Failed to create auth user for ${email}: ${createError.message}`);
-    console.error(
-      "If this account already exists, use the Supabase dashboard " +
-        "(Authentication -> Users -> reset password) instead of this script."
-    );
+    process.exit(1);
+  }
+
+  const { error: adminError } = await admin
+    .from("admin")
+    .upsert({ email: email!, club_id: club.id }, { onConflict: "email,club_id" });
+  if (adminError) {
+    console.error(`Auth user ready, but failed to add ${email} to admin for ${clubSlug}: ${adminError.message}`);
     process.exit(1);
   }
 
   const { error: allowlistError } = await admin
     .from("admin_allowlist")
-    .upsert({ email }, { onConflict: "email" });
-
+    .upsert({ email: email! }, { onConflict: "email" });
   if (allowlistError) {
-    console.error(`Auth user created, but failed to add ${email} to admin_allowlist: ${allowlistError.message}`);
-    console.error("Add it manually via the Supabase dashboard/SQL before they can sign in.");
+    console.error(`Added to admin, but failed to add ${email} to admin_allowlist: ${allowlistError.message}`);
     process.exit(1);
   }
 
-  console.log(`Created admin account for ${email}.`);
-  console.log(`Password: ${password}`);
-  console.log("Share this out-of-band (in person, group chat) — never by email. It will not be shown again.");
+  if (createError?.code === "email_exists") {
+    console.log(`${email} already has an account -- added access to club "${clubSlug}". No new password.`);
+  } else {
+    console.log(`Created admin account for ${email}, club "${clubSlug}".`);
+    console.log(`Password: ${password}`);
+    console.log("Share this out-of-band (in person, group chat) -- never by email. It will not be shown again.");
+  }
 }
 
 main();
