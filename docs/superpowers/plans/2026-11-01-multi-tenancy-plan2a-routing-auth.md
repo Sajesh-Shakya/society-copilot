@@ -18,6 +18,7 @@
 - `admin_allowlist` is not dropped, not modified structurally. `scripts/create-admin.ts` keeps writing to it alongside the new `admin` table.
 - No Taekwondo `admin` row gets created as part of this plan or its testing — only Judo admins exist until Plan 2b's cross-tenant tests pass.
 - `app/api/sessions/[sessionId]/sync/route.ts` is explicitly **out of scope** for this plan — it requires no changes. It's machine-authenticated (`SYNC_TRIGGER_SECRET`), not admin-session-gated, and stays exactly where it is; deriving its club from `session.club_id` only becomes meaningful once `syncSessionAttendance` itself is club-aware, which is Plan 2b's job. Do not move it under `/api/club/[clubSlug]/...` and do not add any club check to it in this plan.
+- **`requireAdmin(clubSlug)` takes `clubSlug` as an OPTIONAL parameter with a transitional default of `"judo"`, not a required one, until Task 9.** Tasks 6 and 7 are the only two tasks that convert every existing caller to pass `clubSlug` explicitly, and they can't both happen in the same commit as Task 1. If `clubSlug` were required from Task 1 onward, every unconverted caller (every page and Server Action Tasks 6–7 haven't reached yet) would fail to compile for the entire span between Task 1 and Task 7 — a broken intermediate state that none of this plan's task-level test commands (which run specific test files, not a full build) would catch. The default keeps every unconverted call site working exactly as it does today (functionally identical to the existing hotfix's Judo-only behavior) until Task 9 removes the default once Tasks 6–7 have converted everything.
 
 ## Review Focus
 
@@ -200,6 +201,12 @@ export async function checkAdminForClub(
   return { clubId: club.id, clubName: club.name };
 }
 
+// Transitional default -- DELETE this default (and this comment) in Task 9,
+// once Tasks 6-7 have converted every caller to pass clubSlug explicitly.
+// Without it, every not-yet-converted caller would fail to compile the
+// moment this task lands, for the entire span until Task 7 finishes.
+const TRANSITIONAL_DEFAULT_CLUB_SLUG = "judo";
+
 /**
  * The actual enforcement point for admin-only Server Actions and pages.
  * Re-checks club membership on every call, same as the pre-multi-tenancy
@@ -207,7 +214,7 @@ export async function checkAdminForClub(
  * immediately without invalidating the Supabase session.
  */
 export async function requireAdmin(
-  clubSlug: string
+  clubSlug: string = TRANSITIONAL_DEFAULT_CLUB_SLUG
 ): Promise<{ email: string; clubId: string; clubName: string }> {
   const supabase = await createServerClient();
   const {
@@ -250,9 +257,14 @@ export async function listAdminClubs(
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `npx playwright test --config=playwright.integration.config.ts tests/integration/require-admin.spec.ts` and `npx playwright test tests/unit/club-path.spec.ts`
-Expected: PASS, all 4 tests.
+Expected: PASS, all 7 tests (4 from Step 1 + 3 `checkAdminForClub` tests appended above).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Confirm the rest of the app still compiles**
+
+Run: `npx tsc --noEmit`
+Expected: no errors. Every existing `requireAdmin()` call site (none of which pass `clubSlug` yet) still compiles because of the `TRANSITIONAL_DEFAULT_CLUB_SLUG` default from Step 4 — if this fails, something other than `requireAdmin`'s signature changed unexpectedly.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add lib/auth/require-admin.ts lib/club-path.ts tests/integration/require-admin.spec.ts tests/unit/club-path.spec.ts
@@ -1075,7 +1087,12 @@ export const config = {
 Run: `npx playwright test --config=playwright.integration.config.ts tests/integration/attendance-sync.spec.ts tests/integration/attendance-toggle.spec.ts tests/integration/session-list.spec.ts tests/integration/csv-import.spec.ts`
 Expected: PASS — these tests call the underlying `lib/attendance/queries.ts`/`lib/attendance/sync.ts`/`lib/csv-import/importer.ts` functions directly (not the Server Actions changed in this task), so they're unaffected by this task's signature changes and should still be green. If any fail, the Server Action changes leaked into a file this task wasn't supposed to touch — investigate before continuing.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 9: Confirm the rest of the app still compiles**
+
+Run: `npx tsc --noEmit`
+Expected: no errors. `requireAdmin`'s `TRANSITIONAL_DEFAULT_CLUB_SLUG` default (Task 1) means the admin pages/actions this task hasn't touched yet (`app/admin/*`, `lib/purchase/actions.ts`, `lib/xlsx/uploader.ts`, `lib/chase/actions.ts`, `lib/person/actions.ts`) still compile with their existing no-argument `requireAdmin()` calls.
+
+- [ ] **Step 10: Commit**
 
 ```bash
 git add -A
@@ -1169,7 +1186,12 @@ Apply the same shape to `app/club/[clubSlug]/admin/unpaid/page.tsx` and `app/clu
 Run: `npx playwright test --config=playwright.integration.config.ts tests/integration/chase-approval.spec.ts tests/integration/chase-send.spec.ts tests/integration/ingest-purchases.spec.ts tests/integration/purchase-upload.spec.ts tests/integration/purchase-waivers.spec.ts tests/integration/person-exempt.spec.ts`
 Expected: PASS — same reasoning as Task 6 Step 8: these call the underlying `lib/` functions directly, not the Server Action wrappers changed here.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Confirm the rest of the app still compiles**
+
+Run: `npx tsc --noEmit`
+Expected: no errors. After this task, every pre-existing `requireAdmin()` call site in the app has been converted (Tasks 6–7 together cover all of them) — this is the point where Task 9 becomes safe to run.
+
+- [ ] **Step 9: Commit**
 
 ```bash
 git add -A
@@ -1238,4 +1260,50 @@ Expected: PASS, every test including the new ones.
 ```bash
 git add tests/e2e/admin-auth-gate.spec.ts
 git commit -m "test: extend admin-auth-gate suite for club-scoped routes"
+```
+
+---
+
+### Task 9: Remove `requireAdmin`'s transitional default
+
+**Files:**
+- Modify: `lib/auth/require-admin.ts`
+
+**Interfaces:**
+- Consumes: every call site converted by Tasks 6–7.
+- Produces: `requireAdmin(clubSlug: string)` — `clubSlug` required, no default. This closes the compile-time loophole Task 1 opened on purpose; after this task, forgetting to pass `clubSlug` anywhere in the app is a build error, not a silent fallback to Judo.
+
+- [ ] **Step 1: Remove the default**
+
+In `lib/auth/require-admin.ts`, delete the `TRANSITIONAL_DEFAULT_CLUB_SLUG` constant and its explanatory comment, and change:
+
+```ts
+export async function requireAdmin(
+  clubSlug: string = TRANSITIONAL_DEFAULT_CLUB_SLUG
+): Promise<{ email: string; clubId: string; clubName: string }> {
+```
+
+to:
+
+```ts
+export async function requireAdmin(
+  clubSlug: string
+): Promise<{ email: string; clubId: string; clubName: string }> {
+```
+
+- [ ] **Step 2: Confirm the whole app still compiles with the default gone**
+
+Run: `npx tsc --noEmit`
+Expected: no errors. If this fails, some caller was missed in Tasks 6–7 — find it via the compiler's own error (it will name the exact file/line calling `requireAdmin()` with no argument) and fix that call site directly as part of this task, rather than reintroducing the default.
+
+- [ ] **Step 3: Run the full test suite**
+
+Run: `npx playwright test tests/e2e/admin-auth-gate.spec.ts tests/e2e/login-redirect.spec.ts` and `npx playwright test --config=playwright.integration.config.ts`
+Expected: PASS — everything from every earlier task in this plan, now with no transitional default anywhere.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add lib/auth/require-admin.ts
+git commit -m "feat(auth): make requireAdmin(clubSlug) required, remove the transitional default"
 ```
