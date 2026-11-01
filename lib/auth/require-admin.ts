@@ -40,12 +40,6 @@ export async function checkAdminForClub(
   return { clubId: club.id, clubName: club.name };
 }
 
-// Transitional default -- DELETE this default (and this comment) in Task 9,
-// once Tasks 6-7 have converted every caller to pass clubSlug explicitly.
-// Without it, every not-yet-converted caller would fail to compile the
-// moment this task lands, for the entire span until Task 7 finishes.
-const TRANSITIONAL_DEFAULT_CLUB_SLUG = "judo";
-
 /**
  * The actual enforcement point for admin-only Server Actions and pages.
  * Re-checks club membership on every call, same as the pre-multi-tenancy
@@ -53,7 +47,7 @@ const TRANSITIONAL_DEFAULT_CLUB_SLUG = "judo";
  * immediately without invalidating the Supabase session.
  */
 export async function requireAdmin(
-  clubSlug: string = TRANSITIONAL_DEFAULT_CLUB_SLUG
+  clubSlug: string
 ): Promise<{ email: string; clubId: string; clubName: string }> {
   const supabase = await createServerClient();
   const {
