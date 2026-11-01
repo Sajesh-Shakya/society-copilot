@@ -7,6 +7,7 @@ import { test, expect } from "@playwright/test";
 // be admin-only.
 test.describe("admin route gating", () => {
   for (const path of [
+    "/",
     "/club/judo",
     "/club/judo/sessions",
     "/club/judo/sessions/new",
