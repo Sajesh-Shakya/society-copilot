@@ -5,15 +5,21 @@ import { listAdminClubs } from "@/lib/auth/require-admin";
 const admin = createAdminClient();
 
 test.describe("listAdminClubs", () => {
+  let emails: string[] = [];
+
+  test.afterEach(async () => {
+    if (emails.length) await admin.from("admin").delete().in("email", emails);
+    emails = [];
+  });
+
   test("returns every club an email administers, with slug and name", async () => {
     const { data: judo } = await admin.from("club").select("id").eq("slug", "judo").single();
     const email = `list-admin-clubs-${crypto.randomUUID()}@example.test`;
+    emails.push(email);
     await admin.from("admin").insert({ email, club_id: judo!.id });
 
     const clubs = await listAdminClubs(email);
     expect(clubs).toEqual([{ clubId: judo!.id, slug: "judo", name: "Judo" }]);
-
-    await admin.from("admin").delete().eq("email", email);
   });
 
   test("returns an empty array for an email with no admin rows", async () => {
@@ -25,6 +31,7 @@ test.describe("listAdminClubs", () => {
     const { data: judo } = await admin.from("club").select("id").eq("slug", "judo").single();
     const { data: tkd } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
     const email = `multi-club-${crypto.randomUUID()}@example.test`;
+    emails.push(email);
     await admin.from("admin").insert([
       { email, club_id: judo!.id },
       { email, club_id: tkd!.id },
@@ -32,8 +39,6 @@ test.describe("listAdminClubs", () => {
 
     const clubs = await listAdminClubs(email);
     expect(clubs.map((c) => c.slug).sort()).toEqual(["judo", "taekwondo"]);
-
-    await admin.from("admin").delete().eq("email", email);
   });
 });
 
@@ -46,15 +51,21 @@ test.describe("listAdminClubs", () => {
 import { checkAdminForClub, UnauthorizedError } from "@/lib/auth/require-admin";
 
 test.describe("checkAdminForClub", () => {
+  let emails: string[] = [];
+
+  test.afterEach(async () => {
+    if (emails.length) await admin.from("admin").delete().in("email", emails);
+    emails = [];
+  });
+
   test("rejects an admin of a different club", async () => {
     const { data: judo } = await admin.from("club").select("id").eq("slug", "judo").single();
     const email = `cross-club-${crypto.randomUUID()}@example.test`;
+    emails.push(email);
     await admin.from("admin").insert({ email, club_id: judo!.id });
 
     await expect(checkAdminForClub(email, "taekwondo")).rejects.toThrow("Not authorized for this club.");
     await expect(checkAdminForClub(email, "judo")).resolves.toMatchObject({ clubId: judo!.id });
-
-    await admin.from("admin").delete().eq("email", email);
   });
 
   test("gives the identical error for an unknown club slug and a known club the email doesn't administer", async () => {

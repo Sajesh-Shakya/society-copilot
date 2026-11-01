@@ -59,6 +59,17 @@ export function createClubScopedClient(clubId: string) {
           values: Row | Row[],
           opts?: { onConflict?: string; ignoreDuplicates?: boolean }
         ) => {
+          if (opts?.onConflict && !opts.ignoreDuplicates) {
+            const conflictColumns = opts.onConflict.split(",").map((c) => c.trim());
+            if (!conflictColumns.includes("club_id")) {
+              throw new Error(
+                `createClubScopedClient: upsert on "${table}" has onConflict "${opts.onConflict}" ` +
+                  `that doesn't include "club_id" -- a DO UPDATE on that conflict target could silently ` +
+                  `overwrite a row belonging to a different club. Include "club_id" in onConflict, or ` +
+                  `pass ignoreDuplicates: true if an insert-only upsert is intended.`
+              );
+            }
+          }
           const rows = Array.isArray(values) ? values : [values];
           for (const row of rows) assertSameClubOrUnset(row, clubId, table, "upsert");
           const stamped = rows.map((row) => ({ ...row, club_id: clubId }));

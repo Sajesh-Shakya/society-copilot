@@ -92,7 +92,7 @@ export function AttendanceScreen({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session.id]);
+  }, [session.id, clubSlug]);
 
   function handleToggle(row: AttendanceRow, attended: boolean) {
     setRows((prev) =>

@@ -12,10 +12,13 @@ async function clubId(slug: "judo" | "taekwondo") {
 
 test.describe("createClubScopedClient", () => {
   let personIds: string[] = [];
+  let productIds: string[] = [];
 
   test.afterEach(async () => {
     if (personIds.length) await admin.from("person").delete().in("id", personIds);
     personIds = [];
+    if (productIds.length) await admin.from("product").delete().in("id", productIds);
+    productIds = [];
   });
 
   test("select automatically filters by club_id", async () => {
@@ -87,5 +90,38 @@ test.describe("createClubScopedClient", () => {
     // Trying to move the row to another club is rejected outright.
     const scopedAsJudo = createClubScopedClient(judo);
     expect(() => scopedAsJudo.from("person").update({ club_id: taekwondo })).toThrow();
+  });
+
+  test("upsert rejects an onConflict target that omits club_id (DO UPDATE could hit another club's row)", async () => {
+    const judo = await clubId("judo");
+    const scoped = createClubScopedClient(judo);
+
+    // product's conflict target is the global unique(name) constraint, which
+    // doesn't include club_id -- a DO UPDATE on it could silently move
+    // another club's product into this one.
+    expect(() =>
+      scoped.from("product").upsert({ name: `Dup-${crypto.randomUUID()}`, kind: "other" }, { onConflict: "name" })
+    ).toThrow();
+  });
+
+  test("upsert with onConflict missing club_id does NOT throw when ignoreDuplicates is true", async () => {
+    const judo = await clubId("judo");
+    const scoped = createClubScopedClient(judo);
+    const name = `Pass-${crypto.randomUUID()}`;
+
+    expect(() =>
+      scoped.from("product").upsert({ name, kind: "other" }, { onConflict: "name", ignoreDuplicates: true })
+    ).not.toThrow();
+
+    const { data, error } = await scoped
+      .from("product")
+      .upsert({ name, kind: "other" }, { onConflict: "name", ignoreDuplicates: true })
+      .select("id");
+    expect(error).toBeNull();
+
+    const { data: row } = await admin.from("product").select("id, club_id").eq("name", name).single();
+    expect(row!.club_id).toBe(judo);
+    productIds.push(row!.id);
+    if (data?.[0]?.id) productIds.push(data[0].id);
   });
 });

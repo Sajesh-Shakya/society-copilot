@@ -1,7 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 
-// Caller identity is checked in app/sessions/[sessionId]/page.tsx (the only
-// caller) before this runs — see lib/auth/require-admin.ts.
+// Caller identity is checked in app/club/[clubSlug]/sessions/[sessionId]/page.tsx
+// (the only caller) before this runs — see lib/auth/require-admin.ts.
 
 export interface AttendanceRow {
   attendanceRecordId: string;
@@ -24,7 +24,7 @@ export interface SessionWithAttendance {
 
 /**
  * Server-only read (admin client — person/session are deny-all RLS). Used by
- * app/sessions/[sessionId]/page.tsx as the initial render; the client then
+ * app/club/[clubSlug]/sessions/[sessionId]/page.tsx as the initial render; the client then
  * layers Realtime updates on top (see components/attendance/attendance-screen.tsx).
  */
 export async function getSessionWithAttendance(
@@ -104,8 +104,8 @@ function isUtcToday(iso: string): boolean {
  * admin who just cancelled it to see the change took effect, or un-cancel
  * it if it was a mistake -- then drops off this list entirely. The
  * session row and its attendance aren't deleted (see setSessionCancelled
- * in lib/attendance/actions.ts) and the direct /sessions/[id] link still
- * works indefinitely; only this dashboard listing hides it.
+ * in lib/attendance/actions.ts) and the direct /club/[clubSlug]/sessions/[id]
+ * link still works indefinitely; only this dashboard listing hides it.
  */
 export async function listRecentSessions(): Promise<SessionListItem[]> {
   const admin = createAdminClient();
@@ -127,7 +127,7 @@ export async function listRecentSessions(): Promise<SessionListItem[]> {
     // attendance_record can be unticked (toggleAttendance sets
     // attended:false rather than deleting the row) or come from an
     // eActivities signup nobody showed up to, and the index page's count
-    // must agree with what /sessions/[id] shows for the same session.
+    // must agree with what /club/[clubSlug]/sessions/[id] shows for the same session.
     //
     // .range() is set explicitly (rather than relying on the default
     // page size) so PostgREST's default max-rows cap can't silently

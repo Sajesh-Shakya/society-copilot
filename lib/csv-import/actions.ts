@@ -69,7 +69,7 @@ export async function createSessionFromCsv(
     return {
       success: false,
       message:
-        "Import failed partway through — check /sessions for a possibly-incomplete session before retrying.",
+        "Import failed partway through — check the sessions list for a possibly-incomplete session before retrying.",
     };
   }
 }
