@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getDefaultClubId } from "@/lib/supabase/default-club";
 import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
 import type { AttendeeRow } from "./parser";
 
@@ -53,7 +54,7 @@ type AdminClient = ReturnType<typeof createAdminClient>;
  * not grounds to silently rewrite someone's contact email or override a
  * previously-confirmed CID.
  */
-async function findOrCreatePersonByEmail(admin: AdminClient, row: AttendeeRow): Promise<string> {
+async function findOrCreatePersonByEmail(admin: AdminClient, row: AttendeeRow, clubId: string): Promise<string> {
   const email = row.email.toLowerCase();
   const cid = row.rawCidOrCardNumber ? normalizeCid(row.rawCidOrCardNumber) : null;
 
@@ -85,6 +86,7 @@ async function findOrCreatePersonByEmail(admin: AdminClient, row: AttendeeRow): 
   const { data: created, error: personError } = await admin
     .from("person")
     .insert({
+      club_id: clubId,
       email: row.email,
       full_name: `${row.firstName} ${row.surname}`.trim(),
       identity_confidence: "confirmed",
@@ -120,18 +122,20 @@ export async function importAttendanceCsv(
   input: ImportAttendanceCsvInput
 ): Promise<ImportAttendanceCsvResult> {
   const admin = createAdminClient();
+  const clubId = await getDefaultClubId(admin);
 
   const { data: session, error: sessionError } = await admin
     .from("session")
-    .insert({ title: input.title, starts_at: new Date(input.startsAt).toISOString() })
+    .insert({ club_id: clubId, title: input.title, starts_at: new Date(input.startsAt).toISOString() })
     .select("id")
     .single();
   if (sessionError) throw sessionError;
 
   for (const row of input.rows) {
-    const personId = await findOrCreatePersonByEmail(admin, row);
+    const personId = await findOrCreatePersonByEmail(admin, row, clubId);
 
     const { error: attendanceError } = await admin.from("attendance_record").insert({
+      club_id: clubId,
       person_id: personId,
       session_id: session.id,
       source: "csv_import",
@@ -184,11 +188,13 @@ export async function syncAttendanceCsv(
   input: SyncAttendanceCsvInput
 ): Promise<SyncAttendanceCsvResult> {
   const admin = createAdminClient();
+  const clubId = await getDefaultClubId(admin);
 
   const records = [];
   for (const row of input.rows) {
-    const personId = await findOrCreatePersonByEmail(admin, row);
+    const personId = await findOrCreatePersonByEmail(admin, row, clubId);
     records.push({
+      club_id: clubId,
       person_id: personId,
       session_id: input.sessionId,
       source: "csv_import" as const,

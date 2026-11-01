@@ -7,6 +7,7 @@
 
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getDefaultClubId } from "@/lib/supabase/default-club";
 import { EactivitiesProvider } from "@/lib/eactivities/provider";
 import { syncSessionAttendance } from "@/lib/attendance/sync";
 import { getSessionWithAttendance } from "@/lib/attendance/queries";
@@ -49,10 +50,12 @@ export async function createSessionFromSignup(
   await requireAdmin();
   const parsed = createSessionSchema.parse(input);
   const admin = createAdminClient();
+  const clubId = await getDefaultClubId(admin);
 
   const { data: session, error } = await admin
     .from("session")
     .insert({
+      club_id: clubId,
       eactivities_event_id: parsed.eventId,
       eactivities_signup_id: parsed.signupId,
       title: parsed.title,
@@ -196,8 +199,10 @@ export async function searchPeople(query: string): Promise<PersonSearchResult[]>
 export async function addExistingPersonToSession(sessionId: string, personId: string) {
   await requireAdmin();
   const admin = createAdminClient();
+  const clubId = await getDefaultClubId(admin);
   const { error } = await admin.from("attendance_record").upsert(
     {
+      club_id: clubId,
       person_id: personId,
       session_id: sessionId,
       attended: true,
@@ -232,6 +237,7 @@ export async function createWalkIn(
   const { sessionId, email, fullName, cid: rawCid } = walkInSchema.parse(input);
   const cid = rawCid ? normalizeCid(rawCid) : null;
   const admin = createAdminClient();
+  const clubId = await getDefaultClubId(admin);
 
   // CID first, if given -- mirrors lib/attendance/sync.ts's identity
   // priority (CID is the one identifier this codebase actually trusts).
@@ -270,6 +276,7 @@ export async function createWalkIn(
     const { data: person, error: personError } = await admin
       .from("person")
       .insert({
+        club_id: clubId,
         email,
         full_name: fullName,
         cid,
@@ -283,6 +290,7 @@ export async function createWalkIn(
 
   const { error: attendanceError } = await admin.from("attendance_record").upsert(
     {
+      club_id: clubId,
       person_id: personId,
       session_id: sessionId,
       attended: true,

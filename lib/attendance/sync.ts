@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getDefaultClubId } from "@/lib/supabase/default-club";
 import { EactivitiesProvider } from "@/lib/eactivities/provider";
 import type { Attendee } from "@/lib/eactivities/types";
 import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
@@ -47,7 +48,8 @@ type AdminClient = ReturnType<typeof createAdminClient>;
  */
 async function findOrCreatePerson(
   admin: AdminClient,
-  attendee: Attendee
+  attendee: Attendee,
+  clubId: string
 ): Promise<{ id: string; created: boolean }> {
   const cid = attendee.CID ? normalizeCid(attendee.CID) : null;
 
@@ -79,6 +81,7 @@ async function findOrCreatePerson(
   const { data: created, error } = await admin
     .from("person")
     .insert({
+      club_id: clubId,
       cid,
       shortcode: attendee.Login,
       email: attendee.Email,
@@ -103,6 +106,7 @@ export async function syncSessionAttendance(
   options: SyncOptions = {}
 ): Promise<SyncResult> {
   const admin = createAdminClient();
+  const clubId = await getDefaultClubId(admin);
 
   const { data: session, error: sessionError } = await admin
     .from("session")
@@ -126,7 +130,7 @@ export async function syncSessionAttendance(
   let attendanceRecordsCreated = 0;
 
   for (const attendee of signup.Attendees) {
-    const { id: personId, created } = await findOrCreatePerson(admin, attendee);
+    const { id: personId, created } = await findOrCreatePerson(admin, attendee, clubId);
     if (created) personsCreated += 1;
 
     // upsert + ignoreDuplicates: true is INSERT ... ON CONFLICT DO NOTHING.
@@ -137,7 +141,7 @@ export async function syncSessionAttendance(
     const { data: inserted, error: insertError } = await admin
       .from("attendance_record")
       .upsert(
-        { person_id: personId, session_id: sessionId, source: "signup_sync" },
+        { club_id: clubId, person_id: personId, session_id: sessionId, source: "signup_sync" },
         { onConflict: "person_id,session_id", ignoreDuplicates: true }
       )
       .select("id");
@@ -161,6 +165,7 @@ export async function syncSessionAttendance(
   // Observability only — see design.md's Architecture Decisions on why the
   // real per-session debounce/window logic uses session.last_synced_at instead.
   await admin.from("sync_cursor").upsert({
+    club_id: clubId,
     source: "eactivities",
     last_synced_at: new Date().toISOString(),
     last_synced_id: session.eactivities_signup_id,

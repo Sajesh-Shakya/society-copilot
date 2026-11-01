@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getDefaultClubId } from "@/lib/supabase/default-club";
 import { listActiveDebtCycles } from "@/lib/chase/debt-cycles";
 import { buildChaseEmailContent } from "@/lib/chase/template";
 
@@ -21,6 +22,7 @@ function daysBetween(earlier: Date, later: Date): number {
 // and "Repeat auto-send policy" architecture decisions.
 export async function generateChaseEmails(): Promise<{ created: number }> {
   const admin = createAdminClient();
+  const clubId = await getDefaultClubId(admin);
   const cycles = await listActiveDebtCycles();
   const now = new Date();
   let created = 0;
@@ -66,6 +68,7 @@ export async function generateChaseEmails(): Promise<{ created: number }> {
     const status = nextSequence === 1 ? "pending_approval" : autoApproved ? "approved" : "pending_approval";
 
     const { error: insertError } = await admin.from("chase_email").insert({
+      club_id: clubId,
       person_id: cycle.personId,
       debt_cycle_started_at: cycle.debtCycleStartedAt,
       sequence_number: nextSequence,
