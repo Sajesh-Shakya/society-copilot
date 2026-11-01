@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { clubPath } from "@/lib/club-path";
 import { getEventSignups, createSessionFromSignup } from "@/lib/attendance/actions";
 
 interface EventOption {
@@ -37,7 +38,13 @@ function toDatetimeLocal(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export function SessionPicker({ events }: { events: EventOption[] }) {
+export function SessionPicker({
+  events,
+  clubSlug,
+}: {
+  events: EventOption[];
+  clubSlug: string;
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [eventId, setEventId] = useState<string>("");
@@ -58,7 +65,7 @@ export function SessionPicker({ events }: { events: EventOption[] }) {
     }
     setLoadingSignups(true);
     try {
-      const detail = await getEventSignups(id);
+      const detail = await getEventSignups(clubSlug, id);
       setSignups(detail.signups);
     } catch {
       toast.error("Couldn't load this event's signups from eActivities.");
@@ -72,14 +79,14 @@ export function SessionPicker({ events }: { events: EventOption[] }) {
     if (!eventId || !signupId || !title || !startsAt) return;
     startTransition(async () => {
       try {
-        const { sessionId } = await createSessionFromSignup({
+        const { sessionId } = await createSessionFromSignup(clubSlug, {
           eventId,
           signupId,
           title,
           startsAt: new Date(startsAt).toISOString(),
         });
         toast.success("Session created");
-        router.push(`/sessions/${sessionId}`);
+        router.push(clubPath(clubSlug, `/sessions/${sessionId}`));
       } catch {
         toast.error("Couldn't create the session. Check EACTIVITIES_API_KEY is set.");
       }

@@ -21,8 +21,12 @@ const provider = new EactivitiesProvider();
 // 3.0 — session creation / signup binding (AC-8)
 // ---------------------------------------------------------------------------
 
-export async function getEventSignups(eventId: string) {
-  await requireAdmin();
+export async function getEventSignups(clubSlug: string, eventId: string) {
+  await requireAdmin(clubSlug);
+  const gate = process.env.EACTIVITIES_CLUB_SLUG;
+  if (gate && clubSlug !== gate) {
+    throw new Error("eActivities isn't available for this club yet — use CSV import instead.");
+  }
   const event = await provider.getEvent(eventId);
   return {
     id: event.ID,
@@ -45,9 +49,14 @@ const createSessionSchema = z.object({
 });
 
 export async function createSessionFromSignup(
+  clubSlug: string,
   input: z.infer<typeof createSessionSchema>
 ): Promise<{ sessionId: string }> {
-  await requireAdmin();
+  await requireAdmin(clubSlug);
+  const gate = process.env.EACTIVITIES_CLUB_SLUG;
+  if (gate && clubSlug !== gate) {
+    throw new Error("eActivities isn't available for this club yet — use CSV import instead.");
+  }
   const parsed = createSessionSchema.parse(input);
   const admin = createAdminClient();
   const clubId = await getDefaultClubId(admin);
@@ -87,8 +96,8 @@ const toggleSchema = z.object({
   attended: z.boolean(),
 });
 
-export async function toggleAttendance(input: z.infer<typeof toggleSchema>) {
-  await requireAdmin();
+export async function toggleAttendance(clubSlug: string, input: z.infer<typeof toggleSchema>) {
+  await requireAdmin(clubSlug);
   const { sessionId, personId, attended } = toggleSchema.parse(input);
   const admin = createAdminClient();
 
@@ -142,9 +151,10 @@ const setSessionCancelledSchema = z.object({
 });
 
 export async function setSessionCancelled(
+  clubSlug: string,
   input: z.infer<typeof setSessionCancelledSchema>
 ) {
-  await requireAdmin();
+  await requireAdmin(clubSlug);
   const { sessionId, cancelled } = setSessionCancelledSchema.parse(input);
   const admin = createAdminClient();
 
@@ -169,8 +179,8 @@ export interface PersonSearchResult {
   similarity: number;
 }
 
-export async function searchPeople(query: string): Promise<PersonSearchResult[]> {
-  await requireAdmin();
+export async function searchPeople(clubSlug: string, query: string): Promise<PersonSearchResult[]> {
+  await requireAdmin(clubSlug);
   const parsed = searchSchema.parse(query);
   const admin = createAdminClient();
 
@@ -196,8 +206,8 @@ export async function searchPeople(query: string): Promise<PersonSearchResult[]>
   }));
 }
 
-export async function addExistingPersonToSession(sessionId: string, personId: string) {
-  await requireAdmin();
+export async function addExistingPersonToSession(clubSlug: string, sessionId: string, personId: string) {
+  await requireAdmin(clubSlug);
   const admin = createAdminClient();
   const clubId = await getDefaultClubId(admin);
   const { error } = await admin.from("attendance_record").upsert(
@@ -231,9 +241,10 @@ const walkInSchema = z.object({
 });
 
 export async function createWalkIn(
+  clubSlug: string,
   input: z.infer<typeof walkInSchema>
 ): Promise<{ personId: string; reusedExisting: boolean }> {
-  await requireAdmin();
+  await requireAdmin(clubSlug);
   const { sessionId, email, fullName, cid: rawCid } = walkInSchema.parse(input);
   const cid = rawCid ? normalizeCid(rawCid) : null;
   const admin = createAdminClient();
@@ -312,8 +323,8 @@ export async function createWalkIn(
 // route stays available for any non-UI caller; the UI just doesn't use it.
 // ---------------------------------------------------------------------------
 
-export async function triggerManualSync(sessionId: string) {
-  await requireAdmin();
+export async function triggerManualSync(clubSlug: string, sessionId: string) {
+  await requireAdmin(clubSlug);
   return syncSessionAttendance(sessionId);
 }
 
@@ -321,8 +332,8 @@ export async function triggerManualSync(sessionId: string) {
 // after a Realtime INSERT, since the raw postgres_changes payload only has
 // attendance_record's own columns (person_id), not the joined person name/
 // email needed to render a new row. See attendance-screen.tsx.
-export async function getAttendanceList(sessionId: string) {
-  await requireAdmin();
+export async function getAttendanceList(clubSlug: string, sessionId: string) {
+  await requireAdmin(clubSlug);
   const session = await getSessionWithAttendance(sessionId);
   return session?.attendance ?? [];
 }

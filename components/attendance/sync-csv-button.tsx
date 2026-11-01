@@ -18,9 +18,11 @@ import { syncCsvToSession } from "@/lib/csv-import/actions";
  */
 export function SyncCsvButton({
   sessionId,
+  clubSlug,
   onSynced,
 }: {
   sessionId: string;
+  clubSlug: string;
   onSynced: () => void;
 }) {
   const pickerRef = useRef<FilePickerButtonHandle>(null);
@@ -31,7 +33,7 @@ export function SyncCsvButton({
     formData.set("file", file);
 
     setIsPending(true);
-    syncCsvToSession(sessionId, formData)
+    syncCsvToSession(clubSlug, sessionId, formData)
       .then((result) => {
         if (result.success) {
           toast.success(result.message);

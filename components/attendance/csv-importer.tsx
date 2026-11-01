@@ -7,9 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FilePickerButton } from "@/components/ui/file-picker-button";
+import { clubPath } from "@/lib/club-path";
 import { createSessionFromCsv } from "@/lib/csv-import/actions";
 
-export function CsvImporter() {
+export function CsvImporter({ clubSlug }: { clubSlug: string }) {
   const router = useRouter();
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,10 +34,10 @@ export function CsvImporter() {
 
     setIsPending(true);
     try {
-      const result = await createSessionFromCsv(formData);
+      const result = await createSessionFromCsv(clubSlug, formData);
       if (result.success && result.sessionId) {
         toast.success(result.message);
-        router.push(`/sessions/${result.sessionId}`);
+        router.push(clubPath(clubSlug, `/sessions/${result.sessionId}`));
       } else {
         setError(result.message);
       }

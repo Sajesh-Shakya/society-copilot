@@ -21,10 +21,12 @@ import type { AttendanceRow } from "@/lib/attendance/queries";
 // — the admin always picks explicitly.
 export function AddAttendee({
   sessionId,
+  clubSlug,
   existingPersonIds,
   onAdded,
 }: {
   sessionId: string;
+  clubSlug: string;
   existingPersonIds: string[];
   onAdded: (row: AttendanceRow) => void;
 }) {
@@ -55,7 +57,7 @@ export function AddAttendee({
     }
     startTransition(async () => {
       try {
-        const found = await searchPeople(value);
+        const found = await searchPeople(clubSlug, value);
         // Show every match, including people already on this session's
         // list -- silently filtering them out (the old behavior) made a
         // duplicate-add attempt look identical to "no matches", which
@@ -71,7 +73,7 @@ export function AddAttendee({
   function handleAddExisting(person: PersonSearchResult) {
     startTransition(async () => {
       try {
-        await addExistingPersonToSession(sessionId, person.id);
+        await addExistingPersonToSession(clubSlug, sessionId, person.id);
         onAdded({
           attendanceRecordId: crypto.randomUUID(),
           personId: person.id,
@@ -92,7 +94,7 @@ export function AddAttendee({
     if (!walkInEmail || !walkInName) return;
     startTransition(async () => {
       try {
-        const { personId, reusedExisting } = await createWalkIn({
+        const { personId, reusedExisting } = await createWalkIn(clubSlug, {
           sessionId,
           email: walkInEmail,
           fullName: walkInName,

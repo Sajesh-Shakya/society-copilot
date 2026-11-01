@@ -20,8 +20,11 @@ export interface CreateSessionFromCsvResult {
  * down (see docs/superpowers/specs/2026-10-09-csv-attendance-import-design.md).
  * No eActivities call anywhere in this path.
  */
-export async function createSessionFromCsv(formData: FormData): Promise<CreateSessionFromCsvResult> {
-  await requireAdmin();
+export async function createSessionFromCsv(
+  clubSlug: string,
+  formData: FormData
+): Promise<CreateSessionFromCsvResult> {
+  await requireAdmin(clubSlug);
 
   const parsed = createSessionFromCsvSchema.safeParse({
     title: String(formData.get("title") ?? ""),
@@ -89,10 +92,11 @@ const sessionIdSchema = z.string().uuid();
  * already marked attended is never removed.
  */
 export async function syncCsvToSession(
+  clubSlug: string,
   sessionId: string,
   formData: FormData
 ): Promise<SyncCsvToSessionResult> {
-  await requireAdmin();
+  await requireAdmin(clubSlug);
 
   const parsedSessionId = sessionIdSchema.safeParse(sessionId);
   if (!parsedSessionId.success) {

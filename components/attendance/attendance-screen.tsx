@@ -15,6 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { createClient } from "@/lib/supabase/client";
+import { clubPath } from "@/lib/club-path";
 import {
   toggleAttendance,
   triggerManualSync,
@@ -39,7 +40,13 @@ function findMatches(query: string, rows: AttendanceRow[]): AttendanceRow[] {
   return rows.filter((r) => fuzzyMatches(query, r.fullName));
 }
 
-export function AttendanceScreen({ session }: { session: SessionWithAttendance }) {
+export function AttendanceScreen({
+  session,
+  clubSlug,
+}: {
+  session: SessionWithAttendance;
+  clubSlug: string;
+}) {
   const [rows, setRows] = useState<AttendanceRow[]>(session.attendance);
   const [isSyncing, startSync] = useTransition();
   const [showEmails, setShowEmails] = useState(false);
@@ -75,7 +82,7 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
               )
             );
           } else if (payload.eventType === "INSERT" || payload.eventType === "DELETE") {
-            const fresh = await getAttendanceList(session.id);
+            const fresh = await getAttendanceList(clubSlug, session.id);
             setRows(fresh);
           }
         }
@@ -91,7 +98,7 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
     setRows((prev) =>
       prev.map((r) => (r.personId === row.personId ? { ...r, attended } : r))
     );
-    toggleAttendance({ sessionId: session.id, personId: row.personId, attended }).catch(
+    toggleAttendance(clubSlug, { sessionId: session.id, personId: row.personId, attended }).catch(
       () => {
         toast.error(`Couldn't update ${row.fullName}`);
         setRows((prev) =>
@@ -104,8 +111,8 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
   function handleSync() {
     startSync(async () => {
       try {
-        await triggerManualSync(session.id);
-        const fresh = await getAttendanceList(session.id);
+        await triggerManualSync(clubSlug, session.id);
+        const fresh = await getAttendanceList(clubSlug, session.id);
         setRows(fresh);
         toast.success("Synced with eActivities");
       } catch (error) {
@@ -118,7 +125,7 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
     const next = !cancelledAt;
     startCancelToggle(async () => {
       try {
-        await setSessionCancelled({ sessionId: session.id, cancelled: next });
+        await setSessionCancelled(clubSlug, { sessionId: session.id, cancelled: next });
         setCancelledAt(next ? new Date().toISOString() : null);
         toast.success(next ? "Session cancelled" : "Session un-cancelled");
       } catch {
@@ -128,7 +135,7 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
   }
 
   async function refetchRows() {
-    const fresh = await getAttendanceList(session.id);
+    const fresh = await getAttendanceList(clubSlug, session.id);
     setRows(fresh);
   }
 
@@ -138,7 +145,7 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/sessions" className="text-sm text-muted-foreground underline">
+        <Link href={clubPath(clubSlug, "/sessions")} className="text-sm text-muted-foreground underline">
           ← All sessions
         </Link>
       </div>
@@ -224,10 +231,11 @@ export function AttendanceScreen({ session }: { session: SessionWithAttendance }
       <div className="flex flex-wrap items-center gap-2">
         <AddAttendee
           sessionId={session.id}
+          clubSlug={clubSlug}
           existingPersonIds={rows.map((r) => r.personId)}
           onAdded={(row) => setRows((prev) => [...prev, row].sort((a, b) => a.fullName.localeCompare(b.fullName)))}
         />
-        <SyncCsvButton sessionId={session.id} onSynced={refetchRows} />
+        <SyncCsvButton sessionId={session.id} clubSlug={clubSlug} onSynced={refetchRows} />
       </div>
     </div>
   );

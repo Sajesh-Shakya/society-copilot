@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdmin, UnauthorizedError } from "@/lib/auth/require-admin";
 import { redirect } from "next/navigation";
+import { clubPath } from "@/lib/club-path";
 import { listRecentSessions } from "@/lib/attendance/queries";
 import { countFailedChaseEmails } from "@/lib/chase/queries";
 import { Button } from "@/components/ui/button";
@@ -9,9 +10,14 @@ import { SignOutButton } from "@/components/auth/sign-out-button";
 
 export const dynamic = "force-dynamic";
 
-export default async function SessionsIndexPage() {
+export default async function SessionsIndexPage({
+  params,
+}: {
+  params: Promise<{ clubSlug: string }>;
+}) {
+  const { clubSlug } = await params;
   try {
-    await requireAdmin();
+    await requireAdmin(clubSlug);
   } catch (error) {
     if (error instanceof UnauthorizedError) redirect("/login");
     throw error;
@@ -38,10 +44,10 @@ export default async function SessionsIndexPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button asChild variant="ghost" size="sm">
-            <Link href="/admin/unpaid">Unpaid sessions</Link>
+            <Link href={clubPath(clubSlug, "/admin/unpaid")}>Unpaid sessions</Link>
           </Button>
           <Button asChild variant="ghost" size="sm">
-            <Link href="/admin/chase-inbox" className="flex items-center gap-2">
+            <Link href={clubPath(clubSlug, "/admin/chase-inbox")} className="flex items-center gap-2">
               Chase inbox
               {failedChaseCount > 0 && (
                 <Badge variant="destructive">{failedChaseCount} failed</Badge>
@@ -49,13 +55,13 @@ export default async function SessionsIndexPage() {
             </Link>
           </Button>
           <Button asChild variant="ghost" size="sm">
-            <Link href="/admin/purchases">Purchases</Link>
+            <Link href={clubPath(clubSlug, "/admin/purchases")}>Purchases</Link>
           </Button>
           <Button asChild variant="outline">
-            <Link href="/sessions/new">New session (eActivities)</Link>
+            <Link href={clubPath(clubSlug, "/sessions/new")}>New session (eActivities)</Link>
           </Button>
           <Button asChild variant="outline">
-            <Link href="/sessions/import">New session (CSV import)</Link>
+            <Link href={clubPath(clubSlug, "/sessions/import")}>New session (CSV import)</Link>
           </Button>
           <SignOutButton />
         </div>
@@ -66,7 +72,7 @@ export default async function SessionsIndexPage() {
           <h2 className="text-sm font-semibold text-muted-foreground">Today</h2>
           <div className="mt-2 flex flex-col gap-2">
             {todaySessions.map((s) => (
-              <SessionRow key={s.id} session={s} />
+              <SessionRow key={s.id} session={s} clubSlug={clubSlug} />
             ))}
           </div>
         </div>
@@ -77,7 +83,7 @@ export default async function SessionsIndexPage() {
           <h2 className="text-sm font-semibold text-muted-foreground">Upcoming</h2>
           <div className="mt-2 flex flex-col gap-2">
             {upcomingSessions.map((s) => (
-              <SessionRow key={s.id} session={s} />
+              <SessionRow key={s.id} session={s} clubSlug={clubSlug} />
             ))}
           </div>
         </div>
@@ -87,7 +93,7 @@ export default async function SessionsIndexPage() {
         <h2 className="text-sm font-semibold text-muted-foreground">Past (last 30 days)</h2>
         <div className="mt-2 flex flex-col gap-2">
           {pastSessions.length > 0 ? (
-            pastSessions.map((s) => <SessionRow key={s.id} session={s} />)
+            pastSessions.map((s) => <SessionRow key={s.id} session={s} clubSlug={clubSlug} />)
           ) : (
             <p className="text-sm text-muted-foreground">No sessions in the last 30 days.</p>
           )}
@@ -105,6 +111,7 @@ export default async function SessionsIndexPage() {
 
 function SessionRow({
   session,
+  clubSlug,
 }: {
   session: {
     id: string;
@@ -113,10 +120,11 @@ function SessionRow({
     attendeeCount: number;
     cancelledAt: string | null;
   };
+  clubSlug: string;
 }) {
   return (
     <Link
-      href={`/sessions/${session.id}`}
+      href={clubPath(clubSlug, `/sessions/${session.id}`)}
       className="flex flex-col gap-2 rounded-lg border p-4 hover:bg-muted sm:flex-row sm:items-center sm:justify-between sm:gap-4"
     >
       <div>

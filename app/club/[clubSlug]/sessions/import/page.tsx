@@ -1,14 +1,20 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { clubPath } from "@/lib/club-path";
 import { CsvImporter } from "@/components/attendance/csv-importer";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { requireAdmin, UnauthorizedError } from "@/lib/auth/require-admin";
 
 export const dynamic = "force-dynamic";
 
-export default async function ImportSessionPage() {
+export default async function ImportSessionPage({
+  params,
+}: {
+  params: Promise<{ clubSlug: string }>;
+}) {
+  const { clubSlug } = await params;
   try {
-    await requireAdmin();
+    await requireAdmin(clubSlug);
   } catch (error) {
     if (error instanceof UnauthorizedError) redirect("/login");
     throw error;
@@ -16,7 +22,7 @@ export default async function ImportSessionPage() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-10">
-      <Link href="/sessions" className="text-sm text-muted-foreground underline">
+      <Link href={clubPath(clubSlug, "/sessions")} className="text-sm text-muted-foreground underline">
         ← All sessions
       </Link>
       <div className="mt-4 flex items-start justify-between">
@@ -30,7 +36,7 @@ export default async function ImportSessionPage() {
         <SignOutButton />
       </div>
       <div className="mt-8">
-        <CsvImporter />
+        <CsvImporter clubSlug={clubSlug} />
       </div>
     </div>
   );
