@@ -813,8 +813,11 @@ export default async function SelectClubPage() {
 
 - [ ] **Step 5: Write `app/club/[clubSlug]/page.tsx`**
 
+Checks auth itself (same pattern as `app/select-club/page.tsx` and `app/page.tsx` above) rather than relying on `middleware.ts`'s matcher — which doesn't cover `/club/:path*` until Task 6 Step 7, so without this check an unauthenticated visitor to `/club/judo` would redirect straight to `/club/judo/sessions` instead of `/login`.
+
 ```tsx
 import { redirect } from "next/navigation";
+import { createClient as createServerClient } from "@/lib/supabase/server";
 import { clubPath } from "@/lib/club-path";
 
 export default async function ClubIndexPage({
@@ -822,6 +825,12 @@ export default async function ClubIndexPage({
 }: {
   params: Promise<{ clubSlug: string }>;
 }) {
+  const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+
   const { clubSlug } = await params;
   redirect(clubPath(clubSlug, "/sessions"));
 }
