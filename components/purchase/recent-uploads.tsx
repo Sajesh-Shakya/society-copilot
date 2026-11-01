@@ -23,9 +23,11 @@ import type { ProductListItem } from "@/lib/purchase/queries";
  * rows even came from the same upload before this existed.
  */
 export function RecentUploads({
+  clubSlug,
   uploads,
   products,
 }: {
+  clubSlug: string;
   uploads: UploadBatch[];
   products: ProductListItem[];
 }) {
@@ -36,14 +38,22 @@ export function RecentUploads({
       <h3 className="text-sm font-medium text-muted-foreground">Recent uploads</h3>
       <div className="flex flex-col gap-2">
         {uploads.map((upload) => (
-          <UploadRow key={upload.id} upload={upload} products={products} />
+          <UploadRow key={upload.id} clubSlug={clubSlug} upload={upload} products={products} />
         ))}
       </div>
     </div>
   );
 }
 
-function UploadRow({ upload, products }: { upload: UploadBatch; products: ProductListItem[] }) {
+function UploadRow({
+  clubSlug,
+  upload,
+  products,
+}: {
+  clubSlug: string;
+  upload: UploadBatch;
+  products: ProductListItem[];
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [confirmingUndo, setConfirmingUndo] = useState(false);
@@ -52,7 +62,7 @@ function UploadRow({ upload, products }: { upload: UploadBatch; products: Produc
     if (newProductId === upload.productId) return;
     startTransition(async () => {
       try {
-        const result = await changeUploadProduct(upload.id, newProductId);
+        const result = await changeUploadProduct(clubSlug, upload.id, newProductId);
         toast.success(
           `Updated ${result.purchasesUpdated} purchase(s)${result.rewaived > 0 ? `, re-waived ${result.rewaived} session(s)` : ""}.`
         );
@@ -70,7 +80,7 @@ function UploadRow({ upload, products }: { upload: UploadBatch; products: Produc
     }
     startTransition(async () => {
       try {
-        const result = await undoUpload(upload.id);
+        const result = await undoUpload(clubSlug, upload.id);
         toast.success(`Undone — removed ${result.deletedPurchases} purchase(s).`);
         router.refresh();
       } catch {

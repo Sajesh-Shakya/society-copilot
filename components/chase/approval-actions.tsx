@@ -7,7 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { approveChase, sendChase, rejectChase } from "@/lib/chase/actions";
 
-export function ApprovalActions({ chaseEmailId, status }: { chaseEmailId: string; status: string }) {
+export function ApprovalActions({
+  clubSlug,
+  chaseEmailId,
+  status,
+}: {
+  clubSlug: string;
+  chaseEmailId: string;
+  status: string;
+}) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [rejecting, setRejecting] = useState(false);
@@ -16,7 +24,7 @@ export function ApprovalActions({ chaseEmailId, status }: { chaseEmailId: string
   async function handleApprove() {
     setIsLoading(true);
     try {
-      const result = await approveChase(chaseEmailId);
+      const result = await approveChase(clubSlug, chaseEmailId);
       if (result.approved) {
         toast.success("Approved.");
         router.refresh();
@@ -33,7 +41,7 @@ export function ApprovalActions({ chaseEmailId, status }: { chaseEmailId: string
   async function handleSend() {
     setIsLoading(true);
     try {
-      const result = await sendChase(chaseEmailId);
+      const result = await sendChase(clubSlug, chaseEmailId);
       if (result.sent) {
         toast.success("Sent.");
       } else if (result.reason === "send_failed") {
@@ -62,7 +70,7 @@ export function ApprovalActions({ chaseEmailId, status }: { chaseEmailId: string
     }
     setIsLoading(true);
     try {
-      const result = await rejectChase(chaseEmailId, note.trim());
+      const result = await rejectChase(clubSlug, chaseEmailId, note.trim());
       if (result.rejected) {
         toast.success("Rejected.");
         setRejecting(false);

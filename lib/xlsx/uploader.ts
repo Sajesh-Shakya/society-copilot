@@ -19,8 +19,8 @@ export interface UploadXlsxResult {
 
 const productIdSchema = z.string().uuid();
 
-export async function uploadXlsx(formData: FormData): Promise<UploadXlsxResult> {
-  const adminUser = await requireAdmin();
+export async function uploadXlsx(clubSlug: string, formData: FormData): Promise<UploadXlsxResult> {
+  const adminUser = await requireAdmin(clubSlug);
 
   const parsedProductId = productIdSchema.safeParse(formData.get("productId"));
   if (!parsedProductId.success) {

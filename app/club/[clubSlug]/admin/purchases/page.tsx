@@ -7,12 +7,18 @@ import { PurchasesTable, type PurchaseRow } from '@/components/purchase/purchase
 import { RecentUploads } from '@/components/purchase/recent-uploads';
 import { listProducts } from '@/lib/purchase/queries';
 import { listRecentUploads } from '@/lib/purchase/interface';
+import { clubPath } from '@/lib/club-path';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AdminPurchasesPage() {
+export default async function AdminPurchasesPage({
+  params,
+}: {
+  params: Promise<{ clubSlug: string }>;
+}) {
+  const { clubSlug } = await params;
   try {
-    await requireAdmin();
+    await requireAdmin(clubSlug);
   } catch (error) {
     if (error instanceof UnauthorizedError) redirect('/login');
     throw error;
@@ -52,7 +58,7 @@ export default async function AdminPurchasesPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:py-10">
-      <Link href="/sessions" className="text-sm text-muted-foreground underline">
+      <Link href={clubPath(clubSlug, "/sessions")} className="text-sm text-muted-foreground underline">
         ← All sessions
       </Link>
       <h1 className="mt-4 text-2xl font-semibold tracking-tight">Purchase Management</h1>
@@ -66,10 +72,10 @@ export default async function AdminPurchasesPage() {
           (or Email), Member Type, Date Purchased.
         </p>
         <div className="mt-4">
-          <XlsxUploader products={products} />
+          <XlsxUploader clubSlug={clubSlug} products={products} />
         </div>
         <div className="mt-6">
-          <RecentUploads uploads={recentUploads} products={products} />
+          <RecentUploads clubSlug={clubSlug} uploads={recentUploads} products={products} />
         </div>
       </div>
 
@@ -77,7 +83,7 @@ export default async function AdminPurchasesPage() {
         <h2 className="font-semibold">Recent Purchases ({purchases.length})</h2>
         {purchases.length > 0 ? (
           <div className="mt-4">
-            <PurchasesTable purchases={purchases} />
+            <PurchasesTable clubSlug={clubSlug} purchases={purchases} />
           </div>
         ) : (
           <p className="mt-4 text-sm text-muted-foreground">No purchases yet.</p>

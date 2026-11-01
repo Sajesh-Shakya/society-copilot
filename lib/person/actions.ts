@@ -11,7 +11,7 @@ import { applyPersonExempt, type SetPersonExemptInput } from "@/lib/person/exemp
 // reachable Server Action by reference, so authorization-sensitive logic
 // must never be exported from here unguarded. This file's only export is
 // this admin-gated wrapper.
-export async function setPersonExempt(input: SetPersonExemptInput): Promise<void> {
-  const admin_user = await requireAdmin();
+export async function setPersonExempt(clubSlug: string, input: SetPersonExemptInput): Promise<void> {
+  const admin_user = await requireAdmin(clubSlug);
   await applyPersonExempt(input, admin_user.email);
 }

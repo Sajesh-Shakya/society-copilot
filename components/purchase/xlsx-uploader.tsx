@@ -14,7 +14,7 @@ import {
 import { toast } from "sonner";
 import type { ProductListItem } from "@/lib/purchase/queries";
 
-export function XlsxUploader({ products }: { products: ProductListItem[] }) {
+export function XlsxUploader({ clubSlug, products }: { clubSlug: string; products: ProductListItem[] }) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [productId, setProductId] = useState<string>("");
@@ -26,7 +26,7 @@ export function XlsxUploader({ products }: { products: ProductListItem[] }) {
     formData.append("productId", productId);
 
     setIsLoading(true);
-    uploadXlsx(formData)
+    uploadXlsx(clubSlug, formData)
       .then((result) => {
         if (result.success) {
           toast.success(result.message);

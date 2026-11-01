@@ -3,6 +3,7 @@ import { requireAdmin, UnauthorizedError } from "@/lib/auth/require-admin";
 import { redirect } from "next/navigation";
 import { listActiveDebtCycles } from "@/lib/chase/debt-cycles";
 import { Badge } from "@/components/ui/badge";
+import { clubPath } from "@/lib/club-path";
 
 export const dynamic = "force-dynamic";
 
@@ -10,9 +11,14 @@ function daysAgo(iso: string): number {
   return Math.floor((Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60 * 24));
 }
 
-export default async function UnpaidPage() {
+export default async function UnpaidPage({
+  params,
+}: {
+  params: Promise<{ clubSlug: string }>;
+}) {
+  const { clubSlug } = await params;
   try {
-    await requireAdmin();
+    await requireAdmin(clubSlug);
   } catch (error) {
     if (error instanceof UnauthorizedError) redirect("/login");
     throw error;
@@ -37,7 +43,7 @@ export default async function UnpaidPage() {
             person&apos;s free trial session.
           </p>
         </div>
-        <Link href="/sessions" className="text-sm text-muted-foreground underline">
+        <Link href={clubPath(clubSlug, "/sessions")} className="text-sm text-muted-foreground underline">
           Back to sessions
         </Link>
       </div>

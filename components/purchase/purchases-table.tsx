@@ -35,7 +35,7 @@ const MATCH_STATUS_VARIANT: Record<string, "secondary" | "destructive"> = {
  * email is behind a toggle rather than always-on, matching the existing
  * "Show emails" pattern on the attendance screen.
  */
-export function PurchasesTable({ purchases }: { purchases: PurchaseRow[] }) {
+export function PurchasesTable({ clubSlug, purchases }: { clubSlug: string; purchases: PurchaseRow[] }) {
   const router = useRouter();
   const [showEmails, setShowEmails] = useState(false);
   const [showOnlyUnmatched, setShowOnlyUnmatched] = useState(false);
@@ -49,7 +49,7 @@ export function PurchasesTable({ purchases }: { purchases: PurchaseRow[] }) {
   function handleRematch() {
     startRematch(async () => {
       try {
-        const result = await rematchUnmatchedPurchases();
+        const result = await rematchUnmatchedPurchases(clubSlug);
         if (result.matched > 0) {
           toast.success(
             `Matched ${result.matched} purchase(s)${result.stillUnmatched > 0 ? ` (${result.stillUnmatched} still unmatched)` : ""}.`

@@ -12,17 +12,17 @@ import { sendChaseEmail } from "@/lib/chase/send";
 // must never be exported from here unguarded. These three wrappers are
 // this file's only exports.
 
-export async function approveChase(chaseEmailId: string): Promise<{ approved: boolean }> {
-  const admin = await requireAdmin();
+export async function approveChase(clubSlug: string, chaseEmailId: string): Promise<{ approved: boolean }> {
+  const admin = await requireAdmin(clubSlug);
   return approveChaseEmail(chaseEmailId, admin.email);
 }
 
-export async function sendChase(chaseEmailId: string): Promise<{ sent: boolean; reason?: string }> {
-  await requireAdmin();
+export async function sendChase(clubSlug: string, chaseEmailId: string): Promise<{ sent: boolean; reason?: string }> {
+  await requireAdmin(clubSlug);
   return sendChaseEmail(chaseEmailId);
 }
 
-export async function rejectChase(chaseEmailId: string, note: string): Promise<{ rejected: boolean }> {
-  const admin = await requireAdmin();
+export async function rejectChase(clubSlug: string, chaseEmailId: string, note: string): Promise<{ rejected: boolean }> {
+  const admin = await requireAdmin(clubSlug);
   return rejectChaseEmail(chaseEmailId, note, admin.email);
 }

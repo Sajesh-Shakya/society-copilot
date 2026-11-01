@@ -3,12 +3,18 @@ import { requireAdmin, UnauthorizedError } from "@/lib/auth/require-admin";
 import { redirect } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ApprovalActions } from "@/components/chase/approval-actions";
+import { clubPath } from "@/lib/club-path";
 
 export const dynamic = "force-dynamic";
 
-export default async function ChaseInboxPage() {
+export default async function ChaseInboxPage({
+  params,
+}: {
+  params: Promise<{ clubSlug: string }>;
+}) {
+  const { clubSlug } = await params;
   try {
-    await requireAdmin();
+    await requireAdmin(clubSlug);
   } catch (error) {
     if (error instanceof UnauthorizedError) redirect("/login");
     throw error;
@@ -30,7 +36,7 @@ export default async function ChaseInboxPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:py-10">
-      <Link href="/sessions" className="text-sm text-muted-foreground underline">
+      <Link href={clubPath(clubSlug, "/sessions")} className="text-sm text-muted-foreground underline">
         ← All sessions
       </Link>
       <h1 className="mt-4 text-2xl font-semibold tracking-tight">Chase Email Approval Inbox</h1>
@@ -53,7 +59,7 @@ export default async function ChaseInboxPage() {
                       Reminder #{c.sequence_number} -- {c.status}
                     </p>
                   </div>
-                  <ApprovalActions chaseEmailId={c.id} status={c.status} />
+                  <ApprovalActions clubSlug={clubSlug} chaseEmailId={c.id} status={c.status} />
                 </div>
                 <div className="mt-3 text-sm">
                   <p className="font-medium">{c.subject}</p>
