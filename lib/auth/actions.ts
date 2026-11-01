@@ -22,14 +22,21 @@ export async function signIn(rawEmail: string, rawPassword: string): Promise<{ e
     email: parsed.data.email.toLowerCase(),
     password: parsed.data.password,
   });
+  // Same generic message for a wrong password AND a valid login with no
+  // admin access -- a distinct message for the latter would let an
+  // attacker confirm a guessed password is correct for a real account
+  // even without admin access (a credential-validation oracle), exactly
+  // what signInWithPassword's own uniform error already avoids for the
+  // email-doesn't-exist case.
+  const INVALID_CREDENTIALS = "Invalid email or password.";
   if (error) {
-    return { error: "Invalid email or password." };
+    return { error: INVALID_CREDENTIALS };
   }
 
   const clubs = await listAdminClubs(parsed.data.email.toLowerCase());
   if (clubs.length === 0) {
     await supabase.auth.signOut();
-    return { error: "This account isn't an admin of any club." };
+    return { error: INVALID_CREDENTIALS };
   }
   if (clubs.length === 1) {
     redirect(clubPath(clubs[0].slug, "/sessions"));
