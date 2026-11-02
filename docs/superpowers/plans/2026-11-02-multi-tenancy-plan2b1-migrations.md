@@ -893,3 +893,50 @@ Expected: no errors.
 - [ ] **Step 4: Record completion**
 
 No commit needed — this task is verification-only. If anything fails, stop and treat it as a regression introduced by Tasks 1-7, not something to patch around in this task.
+
+---
+
+### Task 9 (added mid-execution — ruling, see ledger): Fix `club-scoped-client.spec.ts`'s now-invalid `product` conflict target
+
+**Why this task exists:** Task 8 found `tests/integration/club-scoped-client.spec.ts`'s "upsert with onConflict missing club_id does NOT throw when ignoreDuplicates is true" test failing with Postgres error 42P10 ("no unique or exclusion constraint matching the ON CONFLICT specification"). This is not a defect in Tasks 1-7 — it's a cross-plan interaction: that test was written in the previous plan (Plan 2a), when `product` still had a global `unique(name)` constraint, and used `onConflict: "name"` against `product` as its illustrative example of a conflict target lacking `club_id`. Task 2 of THIS plan correctly moved `product` to `unique(club_id, name)`, so `onConflict: "name"` is no longer a real constraint Postgres can match — the test's second half (the actual DB round-trip) now fails for a reason unrelated to the guard logic it was testing.
+
+**Files:**
+- Modify: `tests/integration/club-scoped-client.spec.ts`
+
+**Interfaces:**
+- Consumes: nothing new.
+- Produces: the test's first half (the synchronous JS-guard check, which never reaches Postgres since `.upsert()` is lazily awaited) keeps `onConflict: "name"` — this still correctly demonstrates the guard permitting a bypass via `ignoreDuplicates` for a conflict target string that omits `club_id`, with zero database dependency. The test's second half (the actual awaited round-trip, which must match a real constraint) changes to `onConflict: "club_id,name"` — the realistic, now-correct usage pattern for this table, matching exactly what Task 2 already did for the real `ingestPurchases` product upsert.
+
+- [ ] **Step 1: Confirm the failure matches this diagnosis**
+
+Run: `npx playwright test --config=playwright.integration.config.ts tests/integration/club-scoped-client.spec.ts`
+Expected: FAIL, specifically the "does NOT throw when ignoreDuplicates is true" test, with a Postgres `42P10` error on the awaited upsert call — not a failure of the `expect(() => ...).not.toThrow()` synchronous assertion above it (that one has no DB dependency and should still pass). If the failure doesn't match this exact shape, stop and report NEEDS_CONTEXT rather than applying the fix below blindly.
+
+- [ ] **Step 2: Fix the test**
+
+In `tests/integration/club-scoped-client.spec.ts`, change only the awaited round-trip's `onConflict` value (leave the synchronous `expect(() => ...).not.toThrow()` call above it unchanged):
+
+```ts
+const { data, error } = await scoped
+  .from("product")
+  .upsert({ name, kind: "other" }, { onConflict: "club_id,name", ignoreDuplicates: true })
+  .select("id");
+expect(error).toBeNull();
+```
+
+- [ ] **Step 3: Run the test file to verify it passes**
+
+Run: `npx playwright test --config=playwright.integration.config.ts tests/integration/club-scoped-client.spec.ts`
+Expected: PASS, all 4 tests.
+
+- [ ] **Step 4: Re-run the full regression pass**
+
+Run: `npx playwright test tests/e2e/admin-auth-gate.spec.ts tests/e2e/login-redirect.spec.ts`, then `npx playwright test --config=playwright.integration.config.ts`, then `npx tsc --noEmit`.
+Expected: all PASS — this is Task 8's checklist, re-run in full now that the one failure is fixed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tests/integration/club-scoped-client.spec.ts
+git commit -m "test: fix club-scoped-client's product onConflict target after Task 2's per-club uniqueness change"
+```
