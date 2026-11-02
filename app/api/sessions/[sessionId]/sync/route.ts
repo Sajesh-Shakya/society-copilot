@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { syncSessionAttendance, SessionNotBoundError, SyncDebouncedError } from "@/lib/attendance/sync";
 import { EactivitiesApiError, EactivitiesNotConfiguredError } from "@/lib/eactivities/types";
 
@@ -26,7 +27,18 @@ export async function POST(
   const { sessionId } = await params;
 
   try {
-    const result = await syncSessionAttendance(sessionId);
+    const admin = createAdminClient();
+    const { data: session, error: sessionError } = await admin
+      .from("session")
+      .select("club_id")
+      .eq("id", sessionId)
+      .single();
+    if (sessionError) throw sessionError;
+    if (!session.club_id) {
+      return NextResponse.json({ error: "session has no club_id" }, { status: 400 });
+    }
+
+    const result = await syncSessionAttendance(sessionId, session.club_id);
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof SessionNotBoundError) {

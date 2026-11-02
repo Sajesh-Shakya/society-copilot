@@ -125,3 +125,35 @@ test.describe("createClubScopedClient", () => {
     if (data?.[0]?.id) productIds.push(data[0].id);
   });
 });
+
+test.describe("createClubScopedClient covers the session table", () => {
+  let sessionIds: string[] = [];
+
+  test.afterEach(async () => {
+    if (sessionIds.length) await admin.from("session").delete().in("id", sessionIds);
+    sessionIds = [];
+  });
+
+  test("insert on session auto-stamps club_id and select filters by it", async () => {
+    const judo = await clubId("judo");
+    const scoped = createClubScopedClient(judo);
+
+    const { data: inserted, error } = await scoped
+      .from("session")
+      .insert({ title: "Scoped Client Session Test", starts_at: new Date().toISOString() })
+      .select("id, club_id")
+      .single();
+    expect(error).toBeNull();
+    expect(inserted!.club_id).toBe(judo);
+    sessionIds.push(inserted!.id);
+
+    const taekwondo = await clubId("taekwondo");
+    const scopedAsTaekwondo = createClubScopedClient(taekwondo);
+    const { data: notFound } = await scopedAsTaekwondo
+      .from("session")
+      .select("id")
+      .eq("id", inserted!.id)
+      .maybeSingle();
+    expect(notFound).toBeNull();
+  });
+});

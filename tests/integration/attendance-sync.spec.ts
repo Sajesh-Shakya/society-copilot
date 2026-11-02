@@ -74,7 +74,7 @@ test.describe("syncSessionAttendance", () => {
     sessionIds.push(sessionId);
 
     const provider = fakeProvider([]);
-    await expect(syncSessionAttendance(sessionId, { provider })).rejects.toThrow(
+    await expect(syncSessionAttendance(sessionId, judoClubId, { provider })).rejects.toThrow(
       SessionNotBoundError
     );
     expect(provider.calls()).toBe(0);
@@ -85,7 +85,7 @@ test.describe("syncSessionAttendance", () => {
     sessionIds.push(sessionId);
 
     const provider = fakeProvider([]);
-    await expect(syncSessionAttendance(sessionId, { provider })).rejects.toThrow(
+    await expect(syncSessionAttendance(sessionId, judoClubId, { provider })).rejects.toThrow(
       SyncDebouncedError
     );
     expect(provider.calls()).toBe(0);
@@ -106,7 +106,7 @@ test.describe("syncSessionAttendance", () => {
     };
     const provider = fakeProvider([attendee]);
 
-    const first = await syncSessionAttendance(sessionId, { provider });
+    const first = await syncSessionAttendance(sessionId, judoClubId, { provider });
     expect(first.attendeesSeen).toBe(1);
     expect(first.personsCreated).toBe(1);
     expect(first.attendanceRecordsCreated).toBe(1);
@@ -126,7 +126,7 @@ test.describe("syncSessionAttendance", () => {
     // Re-running against the *same* unchanged attendee list must not create
     // a second person (CID match) or a second attendance_record (idempotent
     // upsert, ON CONFLICT DO NOTHING) — task 2.2's verify item.
-    const second = await syncSessionAttendance(sessionId, { provider });
+    const second = await syncSessionAttendance(sessionId, judoClubId, { provider });
     expect(second.attendeesSeen).toBe(1);
     expect(second.personsCreated).toBe(0);
     expect(second.attendanceRecordsCreated).toBe(0);
@@ -163,7 +163,7 @@ test.describe("syncSessionAttendance", () => {
       { FirstName: "Existing", Surname: "Person", CID: null, Email: email, Login: null },
     ]);
 
-    const result = await syncSessionAttendance(sessionId, { provider });
+    const result = await syncSessionAttendance(sessionId, judoClubId, { provider });
     expect(result.personsCreated).toBe(0);
     expect(result.attendanceRecordsCreated).toBe(1);
 
@@ -172,6 +172,42 @@ test.describe("syncSessionAttendance", () => {
       .select("id", { count: "exact", head: true })
       .ilike("email", email);
     expect(personCount).toBe(1);
+  });
+
+  test("matching an attendee by CID never returns a person from a different club", async () => {
+    const taekwondoId = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+    const sharedCid = `shared-cid-${crypto.randomUUID().slice(0, 8)}`;
+    const { data: taekwondoPerson, error: tkdError } = await admin
+      .from("person")
+      .insert({
+        club_id: taekwondoId.data!.id,
+        full_name: "Taekwondo Person (CID collision)",
+        email: `tkd-sync-collision-${crypto.randomUUID()}@example.test`,
+        cid: sharedCid,
+      })
+      .select("id")
+      .single();
+    if (tkdError) throw tkdError;
+    personIds.push(taekwondoPerson!.id);
+
+    const sessionId = await createSession(`signup-${crypto.randomUUID()}`);
+    sessionIds.push(sessionId);
+
+    const provider = fakeProvider([
+      { FirstName: "Judo", Surname: "Attendee", CID: sharedCid, Email: `judo-sync-${crypto.randomUUID()}@example.test`, Login: null },
+    ]);
+
+    const result = await syncSessionAttendance(sessionId, judoClubId, { provider });
+    expect(result.personsCreated).toBe(1); // a NEW Judo person, not a match on the Taekwondo one
+
+    const { data: created } = await admin
+      .from("person")
+      .select("id, club_id")
+      .eq("cid", sharedCid)
+      .eq("club_id", judoClubId)
+      .single();
+    expect(created).toBeTruthy();
+    personIds.push(created!.id);
   });
 });
 

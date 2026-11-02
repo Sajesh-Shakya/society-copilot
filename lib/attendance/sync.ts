@@ -1,5 +1,4 @@
-import { createAdminClient } from "@/lib/supabase/admin";
-import { getDefaultClubId } from "@/lib/supabase/default-club";
+import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 import { EactivitiesProvider } from "@/lib/eactivities/provider";
 import type { Attendee } from "@/lib/eactivities/types";
 import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
@@ -37,7 +36,7 @@ interface SyncResult {
   attendanceRecordsCreated: number;
 }
 
-type AdminClient = ReturnType<typeof createAdminClient>;
+type ScopedClient = ReturnType<typeof createClubScopedClient>;
 
 /**
  * Matches an eActivities attendee to an existing person record, or creates
@@ -47,23 +46,23 @@ type AdminClient = ReturnType<typeof createAdminClient>;
  * matching here (that's AC-4's separate, explicit admin-review flow).
  */
 async function findOrCreatePerson(
-  admin: AdminClient,
+  scoped: ScopedClient,
   attendee: Attendee,
   clubId: string
 ): Promise<{ id: string; created: boolean }> {
   const cid = attendee.CID ? normalizeCid(attendee.CID) : null;
 
   if (cid) {
-    const { data: byCid } = await admin
+    const { data: byCid } = await scoped
       .from("person")
       .select("id")
       .eq("cid", cid)
       .maybeSingle();
-    if (byCid) return { id: byCid.id, created: false };
+    if (byCid) return { id: (byCid as unknown as { id: string }).id, created: false };
   }
 
   const email = attendee.Email.toLowerCase();
-  const { data: byEmail } = await admin
+  const { data: byEmail } = await scoped
     .from("person")
     .select("id, cid")
     .ilike("email", escapeIlikePattern(email))
@@ -71,17 +70,16 @@ async function findOrCreatePerson(
   if (byEmail) {
     // Backfill, never overwrite -- same rule as the CSV-import path (see
     // lib/csv-import/importer.ts's findOrCreatePersonByEmail).
-    if (cid && !byEmail.cid) {
-      const { error: backfillError } = await admin.from("person").update({ cid }).eq("id", byEmail.id);
+    if (cid && !(byEmail as unknown as { cid?: string | null }).cid) {
+      const { error: backfillError } = await scoped.from("person").update({ cid }).eq("id", (byEmail as unknown as { id: string }).id);
       if (backfillError) throw backfillError;
     }
-    return { id: byEmail.id, created: false };
+    return { id: (byEmail as unknown as { id: string }).id, created: false };
   }
 
-  const { data: created, error } = await admin
+  const { data: created, error } = await scoped
     .from("person")
     .insert({
-      club_id: clubId,
       cid,
       shortcode: attendee.Login,
       email: attendee.Email,
@@ -90,7 +88,7 @@ async function findOrCreatePerson(
     .select("id")
     .single();
   if (error) throw error;
-  return { id: created.id, created: true };
+  return { id: (created as unknown as { id: string }).id, created: true };
 }
 
 interface SyncOptions {
@@ -103,34 +101,35 @@ interface SyncOptions {
 
 export async function syncSessionAttendance(
   sessionId: string,
+  clubId: string,
   options: SyncOptions = {}
 ): Promise<SyncResult> {
-  const admin = createAdminClient();
-  const clubId = await getDefaultClubId(admin);
+  const scoped = createClubScopedClient(clubId);
 
-  const { data: session, error: sessionError } = await admin
+  const { data: session, error: sessionError } = await scoped
     .from("session")
     .select("id, eactivities_signup_id, last_synced_at")
     .eq("id", sessionId)
     .single();
   if (sessionError) throw sessionError;
-  if (!session.eactivities_signup_id) throw new SessionNotBoundError(sessionId);
+  const typedSession = session as unknown as { id: string; eactivities_signup_id: string; last_synced_at: string | null };
+  if (!typedSession.eactivities_signup_id) throw new SessionNotBoundError(sessionId);
 
-  if (session.last_synced_at) {
-    const elapsed = Date.now() - new Date(session.last_synced_at).getTime();
+  if (typedSession.last_synced_at) {
+    const elapsed = Date.now() - new Date(typedSession.last_synced_at).getTime();
     if (elapsed < DEBOUNCE_MS) {
       throw new SyncDebouncedError(sessionId, DEBOUNCE_MS - elapsed);
     }
   }
 
   const provider = options.provider ?? new EactivitiesProvider();
-  const signup = await provider.getSignup(session.eactivities_signup_id);
+  const signup = await provider.getSignup(typedSession.eactivities_signup_id);
 
   let personsCreated = 0;
   let attendanceRecordsCreated = 0;
 
   for (const attendee of signup.Attendees) {
-    const { id: personId, created } = await findOrCreatePerson(admin, attendee, clubId);
+    const { id: personId, created } = await findOrCreatePerson(scoped, attendee, clubId);
     if (created) personsCreated += 1;
 
     // upsert + ignoreDuplicates: true is INSERT ... ON CONFLICT DO NOTHING.
@@ -138,10 +137,10 @@ export async function syncSessionAttendance(
     // AC-6's "without duplicating or losing existing ticks." select() after
     // an ignored upsert returns no row, so its presence tells us whether a
     // new attendance_record was actually created.
-    const { data: inserted, error: insertError } = await admin
+    const { data: inserted, error: insertError } = await scoped
       .from("attendance_record")
       .upsert(
-        { club_id: clubId, person_id: personId, session_id: sessionId, source: "signup_sync" },
+        { person_id: personId, session_id: sessionId, source: "signup_sync" },
         { onConflict: "person_id,session_id", ignoreDuplicates: true }
       )
       .select("id");
@@ -157,18 +156,17 @@ export async function syncSessionAttendance(
     }
   }
 
-  await admin
+  await scoped
     .from("session")
     .update({ last_synced_at: new Date().toISOString() })
     .eq("id", sessionId);
 
   // Observability only — see design.md's Architecture Decisions on why the
   // real per-session debounce/window logic uses session.last_synced_at instead.
-  await admin.from("sync_cursor").upsert({
-    club_id: clubId,
+  await scoped.from("sync_cursor").upsert({
     source: "eactivities",
     last_synced_at: new Date().toISOString(),
-    last_synced_id: session.eactivities_signup_id,
+    last_synced_id: typedSession.eactivities_signup_id,
   });
 
   return {
