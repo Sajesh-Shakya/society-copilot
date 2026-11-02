@@ -234,6 +234,7 @@ test.describe("purchase upload batches", () => {
       .insert({ club_id: judo!.id, name: `Upload Test Product ${crypto.randomUUID()}`, kind: "other" })
       .select("id")
       .single();
+    productIds.push(product.data!.id);
 
     const { data: upload, error } = await admin
       .from("purchase_upload")
@@ -242,8 +243,6 @@ test.describe("purchase upload batches", () => {
       .single();
     expect(error).toBeNull();
     expect(upload!.club_id).toBe(judo!.id);
-
-    await admin.from("purchase_upload").delete().eq("id", upload!.id);
-    await admin.from("product").delete().eq("id", product.data!.id);
+    uploadIds.push(upload!.id);
   });
 });

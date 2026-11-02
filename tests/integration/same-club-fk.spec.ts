@@ -14,6 +14,7 @@ test.describe("same-club foreign keys", () => {
   let sessionIds: string[] = [];
 
   test.afterEach(async () => {
+    if (personIds.length) await admin.from("attendance_record").delete().in("person_id", personIds);
     if (personIds.length) await admin.from("person").delete().in("id", personIds);
     if (sessionIds.length) await admin.from("session").delete().in("id", sessionIds);
     personIds = [];
@@ -76,6 +77,5 @@ test.describe("same-club foreign keys", () => {
       source: "manual_tick",
     });
     expect(error).toBeNull();
-    await admin.from("attendance_record").delete().eq("person_id", person.data!.id);
   });
 });

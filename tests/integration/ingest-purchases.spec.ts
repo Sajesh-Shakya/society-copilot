@@ -54,6 +54,18 @@ test.describe("ingestPurchases", () => {
     }
 
     if (productId) {
+      // Some tests (e.g. the per-club product uniqueness test) create
+      // purchases tied to productId without going through the tracked
+      // personId above, so those purchase rows would otherwise survive and
+      // block this delete via purchase.product_id's FK to product.
+      const { error: purchaseByProductDeleteError } = await admin
+        .from("purchase")
+        .delete()
+        .eq("product_id", productId);
+      if (purchaseByProductDeleteError) {
+        throw new Error(`Cleanup failed deleting purchase by product_id: ${purchaseByProductDeleteError.message}`);
+      }
+
       const { error: productDeleteError } = await admin.from("product").delete().eq("id", productId);
       if (productDeleteError) {
         throw new Error(`Cleanup failed deleting product: ${productDeleteError.message}`);
@@ -250,6 +262,7 @@ test.describe("ingestPurchases", () => {
       .eq("club_id", judo!.id)
       .maybeSingle();
     expect(judoProduct).not.toBeNull();
+    productId = judoProduct!.id;
 
     // The Taekwondo product with the identical name must be a DIFFERENT row,
     // not reuse Judo's -- this test can't actually trigger the Taekwondo path
@@ -271,9 +284,6 @@ test.describe("ingestPurchases", () => {
     expect(judoRowAgain.inserted).toBe(1);
     const { data: stillOneProduct } = await admin.from("product").select("id").eq("name", sharedName);
     expect(stillOneProduct).toHaveLength(1);
-
-    await admin.from("purchase").delete().eq("product_id", judoProduct!.id);
-    await admin.from("product").delete().eq("id", judoProduct!.id);
   });
 });
 
