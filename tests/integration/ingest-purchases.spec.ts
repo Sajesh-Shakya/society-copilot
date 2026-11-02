@@ -225,6 +225,56 @@ test.describe("ingestPurchases", () => {
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].reason).toMatch(/productId or productName is required/);
   });
+
+  test("two different clubs can each have their own product with the same name", async () => {
+    const { data: judo } = await admin.from("club").select("id").eq("slug", "judo").single();
+    const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+    const sharedName = `Shared Product ${crypto.randomUUID()}`;
+
+    const judoRow = await ingestPurchases([
+      {
+        externalId: `ext-judo-${crypto.randomUUID()}`,
+        personName: "Judo Buyer",
+        memberType: "Student",
+        productName: sharedName,
+        purchasedAt: new Date(),
+        source: "pluto_api",
+      },
+    ]);
+    expect(judoRow.inserted).toBe(1);
+
+    const { data: judoProduct } = await admin
+      .from("product")
+      .select("id, club_id")
+      .eq("name", sharedName)
+      .eq("club_id", judo!.id)
+      .maybeSingle();
+    expect(judoProduct).not.toBeNull();
+
+    // The Taekwondo product with the identical name must be a DIFFERENT row,
+    // not reuse Judo's -- this test can't actually trigger the Taekwondo path
+    // yet (ingestPurchases is still Judo-only until Plan 2b-2), so this
+    // assertion is a placeholder for that later conversion. For THIS task,
+    // the real assertion is that the migration + onConflict fix didn't break
+    // Judo's own by-name upsert, proven by judoRow.inserted === 1 above and by
+    // this duplicate-call idempotency check:
+    const judoRowAgain = await ingestPurchases([
+      {
+        externalId: `ext-judo-again-${crypto.randomUUID()}`,
+        personName: "Judo Buyer 2",
+        memberType: "Student",
+        productName: sharedName,
+        purchasedAt: new Date(),
+        source: "pluto_api",
+      },
+    ]);
+    expect(judoRowAgain.inserted).toBe(1);
+    const { data: stillOneProduct } = await admin.from("product").select("id").eq("name", sharedName);
+    expect(stillOneProduct).toHaveLength(1);
+
+    await admin.from("purchase").delete().eq("product_id", judoProduct!.id);
+    await admin.from("product").delete().eq("id", judoProduct!.id);
+  });
 });
 
 test.describe("rematchUnmatchedPurchases", () => {

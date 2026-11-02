@@ -84,7 +84,10 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
     try {
       const { data: upserted, error: upsertError } = await admin
         .from('product')
-        .upsert({ club_id: clubId, name: productName, kind: 'other' }, { onConflict: 'name', ignoreDuplicates: true })
+        .upsert(
+          { club_id: clubId, name: productName, kind: 'other' },
+          { onConflict: 'club_id,name', ignoreDuplicates: true }
+        )
         .select('id')
         .maybeSingle();
 
@@ -99,12 +102,15 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
       }
 
       // ignoreDuplicates means an existing row returns no data from the
-      // upsert itself — fetch it explicitly. Safe to use maybeSingle() here
-      // because product.name is now unique.
+      // upsert itself — fetch it explicitly. product.name is now unique only
+      // per club_id (not globally), so the lookup must be scoped the same
+      // way, or maybeSingle() would throw if another club happened to have a
+      // product with the same name.
       const { data: existing, error: lookupError } = await admin
         .from('product')
         .select('id')
         .eq('name', productName)
+        .eq('club_id', clubId)
         .maybeSingle();
 
       if (!lookupError && existing) {
