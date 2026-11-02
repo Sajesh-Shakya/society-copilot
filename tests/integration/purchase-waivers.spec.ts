@@ -472,38 +472,80 @@ test.describe("reapplyWaiversForPerson", () => {
   });
 });
 
-test("reapplyWaiversForEveryoneWithDebt only processes the target club's debtors", async () => {
-  const { data: judo } = await admin.from("club").select("id").eq("slug", "judo").single();
-  const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+test.describe("reapplyWaiversForEveryoneWithDebt club scoping", () => {
+  let tkdPersonId = "";
+  let tkdSessionIds: string[] = [];
 
-  // A Taekwondo debtor: one attendance record, unwaived, no pass.
-  const tkdPerson = await admin
-    .from("person")
-    .insert({ club_id: taekwondo!.id, full_name: "TKD Debtor", email: `tkd-debt-${crypto.randomUUID()}@example.test` })
-    .select("id")
-    .single();
-  const tkdSession1 = await admin
-    .from("session")
-    .insert({ club_id: taekwondo!.id, title: "TKD S1", starts_at: new Date(Date.now() - 20 * 86400000).toISOString() })
-    .select("id")
-    .single();
-  const tkdSession2 = await admin
-    .from("session")
-    .insert({ club_id: taekwondo!.id, title: "TKD S2", starts_at: new Date(Date.now() - 10 * 86400000).toISOString() })
-    .select("id")
-    .single();
-  await admin.from("attendance_record").insert([
-    { club_id: taekwondo!.id, person_id: tkdPerson.data!.id, session_id: tkdSession1.data!.id, source: "manual_tick" },
-    { club_id: taekwondo!.id, person_id: tkdPerson.data!.id, session_id: tkdSession2.data!.id, source: "manual_tick" },
-  ]);
-
-  const { data: resultForJudo, error } = await admin.rpc("reapply_waivers_for_everyone_with_debt", {
-    target_club_id: judo!.id,
+  test.afterEach(async () => {
+    if (tkdSessionIds.length > 0) {
+      const { error: attendanceDeleteError } = await admin
+        .from("attendance_record")
+        .delete()
+        .in("session_id", tkdSessionIds);
+      if (attendanceDeleteError) throw new Error(`Cleanup failed: ${attendanceDeleteError.message}`);
+      const { error: sessionDeleteError } = await admin.from("session").delete().in("id", tkdSessionIds);
+      if (sessionDeleteError) throw new Error(`Cleanup failed: ${sessionDeleteError.message}`);
+      tkdSessionIds = [];
+    }
+    if (tkdPersonId) {
+      const { error: personDeleteError } = await admin.from("person").delete().eq("id", tkdPersonId);
+      if (personDeleteError) throw new Error(`Cleanup failed: ${personDeleteError.message}`);
+      tkdPersonId = "";
+    }
   });
-  expect(error).toBeNull();
-  expect((resultForJudo ?? []).map((r: { person_id: string }) => r.person_id)).not.toContain(tkdPerson.data!.id);
 
-  await admin.from("attendance_record").delete().eq("person_id", tkdPerson.data!.id);
-  await admin.from("session").delete().in("id", [tkdSession1.data!.id, tkdSession2.data!.id]);
-  await admin.from("person").delete().eq("id", tkdPerson.data!.id);
+  test("only processes the target club's debtors", async () => {
+    const { data: judo, error: judoError } = await admin.from("club").select("id").eq("slug", "judo").single();
+    if (judoError || !judo) throw new Error(`Failed to look up judo club: ${judoError?.message}`);
+    const { data: taekwondo, error: tkdClubError } = await admin
+      .from("club")
+      .select("id")
+      .eq("slug", "taekwondo")
+      .single();
+    if (tkdClubError || !taekwondo) throw new Error(`Failed to look up taekwondo club: ${tkdClubError?.message}`);
+
+    // A Taekwondo debtor: two attendance records, unwaived, no pass.
+    const { data: tkdPerson, error: personError } = await admin
+      .from("person")
+      .insert({ club_id: taekwondo.id, full_name: "TKD Debtor", email: `tkd-debt-${randomUUID()}@example.test` })
+      .select("id")
+      .single();
+    if (personError || !tkdPerson) throw new Error(`Failed to create test person: ${personError?.message}`);
+    tkdPersonId = tkdPerson.id;
+
+    const { data: tkdSession1, error: session1Error } = await admin
+      .from("session")
+      .insert({ club_id: taekwondo.id, title: "TKD S1", starts_at: new Date(Date.now() - 20 * 86400000).toISOString() })
+      .select("id")
+      .single();
+    if (session1Error || !tkdSession1) throw new Error(`Failed to create test session: ${session1Error?.message}`);
+    const { data: tkdSession2, error: session2Error } = await admin
+      .from("session")
+      .insert({ club_id: taekwondo.id, title: "TKD S2", starts_at: new Date(Date.now() - 10 * 86400000).toISOString() })
+      .select("id")
+      .single();
+    if (session2Error || !tkdSession2) throw new Error(`Failed to create test session: ${session2Error?.message}`);
+    tkdSessionIds = [tkdSession1.id, tkdSession2.id];
+
+    const { error: attendanceError } = await admin.from("attendance_record").insert([
+      { club_id: taekwondo.id, person_id: tkdPersonId, session_id: tkdSession1.id, source: "manual_tick" },
+      { club_id: taekwondo.id, person_id: tkdPersonId, session_id: tkdSession2.id, source: "manual_tick" },
+    ]);
+    if (attendanceError) throw new Error(`Failed to create test attendance: ${attendanceError.message}`);
+
+    const { data: resultForJudo, error: judoCallError } = await admin.rpc("reapply_waivers_for_everyone_with_debt", {
+      target_club_id: judo.id,
+    });
+    expect(judoCallError).toBeNull();
+    expect((resultForJudo ?? []).map((r: { person_id: string }) => r.person_id)).not.toContain(tkdPersonId);
+
+    // Positive control: calling with the Taekwondo club id DOES surface this
+    // person, proving the Judo-scoped call above returned nothing because of
+    // club filtering, not because the fixture never created real debt.
+    const { data: resultForTkd, error: tkdCallError } = await admin.rpc("reapply_waivers_for_everyone_with_debt", {
+      target_club_id: taekwondo.id,
+    });
+    expect(tkdCallError).toBeNull();
+    expect((resultForTkd ?? []).map((r: { person_id: string }) => r.person_id)).toContain(tkdPersonId);
+  });
 });
