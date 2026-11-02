@@ -180,12 +180,14 @@ export interface PersonSearchResult {
 }
 
 export async function searchPeople(clubSlug: string, query: string): Promise<PersonSearchResult[]> {
-  await requireAdmin(clubSlug);
+  const { clubId } = await requireAdmin(clubSlug);
   const parsed = searchSchema.parse(query);
   const admin = createAdminClient();
 
   const { data, error } = await admin.rpc("search_person_by_name", {
+    target_club_id: clubId,
     search_query: parsed,
+    match_limit: 8,
   });
   if (error) throw error;
 

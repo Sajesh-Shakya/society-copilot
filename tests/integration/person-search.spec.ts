@@ -19,7 +19,11 @@ interface SearchRow {
 }
 
 async function search(query: string): Promise<SearchRow[]> {
-  const { data, error } = await admin.rpc("search_person_by_name", { search_query: query });
+  const { data, error } = await admin.rpc("search_person_by_name", {
+    target_club_id: judoClubId,
+    search_query: query,
+    match_limit: 8,
+  });
   if (error) throw error;
   return data as SearchRow[];
 }
@@ -85,4 +89,33 @@ test.describe("search_person_by_name with email matching", () => {
     const results = await search(`nonexistent-query-${crypto.randomUUID()}`);
     expect(results.some((r) => r.id === id)).toBe(false);
   });
+});
+
+test("a Taekwondo person is not found when searching as Judo", async () => {
+  const { data: judo } = await admin.from("club").select("id").eq("slug", "judo").single();
+  const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+  const uniqueName = `Zzyxqvw Tkdperson ${crypto.randomUUID().slice(0, 8)}`;
+
+  const tkdPerson = await admin
+    .from("person")
+    .insert({ club_id: taekwondo!.id, full_name: uniqueName, email: `tkd-search-${crypto.randomUUID()}@example.test` })
+    .select("id")
+    .single();
+
+  const { data: resultsAsJudo, error } = await admin.rpc("search_person_by_name", {
+    target_club_id: judo!.id,
+    search_query: uniqueName,
+    match_limit: 8,
+  });
+  expect(error).toBeNull();
+  expect((resultsAsJudo ?? []).map((r: { id: string }) => r.id)).not.toContain(tkdPerson.data!.id);
+
+  const { data: resultsAsTaekwondo } = await admin.rpc("search_person_by_name", {
+    target_club_id: taekwondo!.id,
+    search_query: uniqueName,
+    match_limit: 8,
+  });
+  expect((resultsAsTaekwondo ?? []).map((r: { id: string }) => r.id)).toContain(tkdPerson.data!.id);
+
+  await admin.from("person").delete().eq("id", tkdPerson.data!.id);
 });
