@@ -471,3 +471,39 @@ test.describe("reapplyWaiversForPerson", () => {
     expect(await getOutstandingDebt(personId)).toBe(0);
   });
 });
+
+test("reapplyWaiversForEveryoneWithDebt only processes the target club's debtors", async () => {
+  const { data: judo } = await admin.from("club").select("id").eq("slug", "judo").single();
+  const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+
+  // A Taekwondo debtor: one attendance record, unwaived, no pass.
+  const tkdPerson = await admin
+    .from("person")
+    .insert({ club_id: taekwondo!.id, full_name: "TKD Debtor", email: `tkd-debt-${crypto.randomUUID()}@example.test` })
+    .select("id")
+    .single();
+  const tkdSession1 = await admin
+    .from("session")
+    .insert({ club_id: taekwondo!.id, title: "TKD S1", starts_at: new Date(Date.now() - 20 * 86400000).toISOString() })
+    .select("id")
+    .single();
+  const tkdSession2 = await admin
+    .from("session")
+    .insert({ club_id: taekwondo!.id, title: "TKD S2", starts_at: new Date(Date.now() - 10 * 86400000).toISOString() })
+    .select("id")
+    .single();
+  await admin.from("attendance_record").insert([
+    { club_id: taekwondo!.id, person_id: tkdPerson.data!.id, session_id: tkdSession1.data!.id, source: "manual_tick" },
+    { club_id: taekwondo!.id, person_id: tkdPerson.data!.id, session_id: tkdSession2.data!.id, source: "manual_tick" },
+  ]);
+
+  const { data: resultForJudo, error } = await admin.rpc("reapply_waivers_for_everyone_with_debt", {
+    target_club_id: judo!.id,
+  });
+  expect(error).toBeNull();
+  expect((resultForJudo ?? []).map((r: { person_id: string }) => r.person_id)).not.toContain(tkdPerson.data!.id);
+
+  await admin.from("attendance_record").delete().eq("person_id", tkdPerson.data!.id);
+  await admin.from("session").delete().in("id", [tkdSession1.data!.id, tkdSession2.data!.id]);
+  await admin.from("person").delete().eq("id", tkdPerson.data!.id);
+});

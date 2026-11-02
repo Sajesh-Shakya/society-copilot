@@ -354,7 +354,8 @@ export interface ReapplySweepResult {
  */
 export async function reapplyWaiversForEveryoneWithDebt(): Promise<ReapplySweepResult> {
   const admin = createAdminClient();
-  const { data, error } = await admin.rpc('reapply_waivers_for_everyone_with_debt');
+  const clubId = await getDefaultClubId(admin);
+  const { data, error } = await admin.rpc('reapply_waivers_for_everyone_with_debt', { target_club_id: clubId });
   if (error) {
     throw new Error(`Failed to run the waiver re-check sweep: ${error.message}`);
   }
