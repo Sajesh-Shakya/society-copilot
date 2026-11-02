@@ -62,7 +62,7 @@ test.describe("listRecentSessions", () => {
     const id = await createSession("Today's Test Session", new Date());
     sessionIds.push(id);
 
-    const results = await listRecentSessions();
+    const results = await listRecentSessions(judoClubId);
     const found = results.find((r) => r.id === id);
     expect(found).toBeDefined();
     expect(found!.isToday).toBe(true);
@@ -75,7 +75,7 @@ test.describe("listRecentSessions", () => {
     );
     sessionIds.push(id);
 
-    const results = await listRecentSessions();
+    const results = await listRecentSessions(judoClubId);
     const found = results.find((r) => r.id === id);
     expect(found).toBeDefined();
     expect(found!.isToday).toBe(false);
@@ -88,7 +88,7 @@ test.describe("listRecentSessions", () => {
     );
     sessionIds.push(id);
 
-    const results = await listRecentSessions();
+    const results = await listRecentSessions(judoClubId);
     expect(results.some((r) => r.id === id)).toBe(false);
   });
 
@@ -99,7 +99,7 @@ test.describe("listRecentSessions", () => {
     );
     sessionIds.push(id);
 
-    const results = await listRecentSessions();
+    const results = await listRecentSessions(judoClubId);
     const found = results.find((r) => r.id === id);
     expect(found).toBeDefined();
     expect(found!.isFuture).toBe(true);
@@ -112,7 +112,7 @@ test.describe("listRecentSessions", () => {
     );
     sessionIds.push(id);
 
-    const results = await listRecentSessions();
+    const results = await listRecentSessions(judoClubId);
     const found = results.find((r) => r.id === id);
     expect(found).toBeDefined();
     expect(found!.isFuture).toBe(false);
@@ -134,7 +134,7 @@ test.describe("listRecentSessions", () => {
       .insert({ club_id: judoClubId, person_id: notAttendedPersonId, session_id: sessionId, source: "manual_tick", attended: false });
     if (notAttendedError) throw notAttendedError;
 
-    const results = await listRecentSessions();
+    const results = await listRecentSessions(judoClubId);
     const found = results.find((r) => r.id === sessionId);
     expect(found).toBeDefined();
     expect(found!.attendeeCount).toBe(1);
@@ -148,7 +148,7 @@ test.describe("listRecentSessions", () => {
     const newerId = await createSession("Newer Test Session", new Date());
     sessionIds.push(olderId, newerId);
 
-    const results = await listRecentSessions();
+    const results = await listRecentSessions(judoClubId);
     const olderIndex = results.findIndex((r) => r.id === olderId);
     const newerIndex = results.findIndex((r) => r.id === newerId);
     expect(newerIndex).toBeLessThan(olderIndex);
@@ -163,7 +163,7 @@ test.describe("listRecentSessions", () => {
       .eq("id", id);
     if (error) throw error;
 
-    const results = await listRecentSessions();
+    const results = await listRecentSessions(judoClubId);
     const found = results.find((r) => r.id === id);
     expect(found).toBeDefined();
     expect(found!.cancelledAt).not.toBeNull();
@@ -178,7 +178,22 @@ test.describe("listRecentSessions", () => {
       .eq("id", id);
     if (error) throw error;
 
-    const results = await listRecentSessions();
+    const results = await listRecentSessions(judoClubId);
     expect(results.find((r) => r.id === id)).toBeUndefined();
+  });
+
+  test("never includes a session from a different club", async () => {
+    const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+    const { data: tkdSession, error } = await admin
+      .from("session")
+      .insert({ club_id: taekwondo!.id, title: "Taekwondo Isolation Test Session", starts_at: new Date().toISOString() })
+      .select("id")
+      .single();
+    if (error) throw error;
+
+    const results = await listRecentSessions(judoClubId);
+    expect(results.some((r) => r.id === tkdSession!.id)).toBe(false);
+
+    await admin.from("session").delete().eq("id", tkdSession!.id);
   });
 });

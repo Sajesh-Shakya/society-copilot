@@ -16,15 +16,16 @@ export default async function SessionsIndexPage({
   params: Promise<{ clubSlug: string }>;
 }) {
   const { clubSlug } = await params;
+  let clubId: string;
   try {
-    await requireAdmin(clubSlug);
+    ({ clubId } = await requireAdmin(clubSlug));
   } catch (error) {
     if (error instanceof UnauthorizedError) redirect("/login");
     throw error;
   }
 
   const [sessions, failedChaseCount] = await Promise.all([
-    listRecentSessions(),
+    listRecentSessions(clubId),
     countFailedChaseEmails(),
   ]);
   const todaySessions = sessions.filter((s) => s.isToday);

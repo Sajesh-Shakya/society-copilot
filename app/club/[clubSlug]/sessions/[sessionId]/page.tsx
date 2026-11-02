@@ -13,14 +13,15 @@ export default async function SessionAttendancePage({
   params: Promise<{ clubSlug: string; sessionId: string }>;
 }) {
   const { clubSlug, sessionId } = await params;
+  let clubId: string;
   try {
-    await requireAdmin(clubSlug);
+    ({ clubId } = await requireAdmin(clubSlug));
   } catch (error) {
     if (error instanceof UnauthorizedError) redirect("/login");
     throw error;
   }
 
-  const session = await getSessionWithAttendance(sessionId);
+  const session = await getSessionWithAttendance(sessionId, clubId);
   if (!session) notFound();
 
   return (
