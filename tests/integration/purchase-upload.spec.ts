@@ -117,7 +117,7 @@ test.describe("purchase upload batches", () => {
   async function createUpload(productId: string): Promise<string> {
     const { data, error } = await admin
       .from("purchase_upload")
-      .insert({ product_id: productId, filename: "test.xlsx", row_count: 1, uploaded_by: "test@example.test" })
+      .insert({ club_id: judoClubId, product_id: productId, filename: "test.xlsx", row_count: 1, uploaded_by: "test@example.test" })
       .select("id")
       .single();
     if (error || !data) throw new Error(`Failed to create test upload: ${error?.message}`);
@@ -225,5 +225,25 @@ test.describe("purchase upload batches", () => {
       .eq("id", uploadId)
       .maybeSingle();
     expect(deletedUpload).toBeNull();
+  });
+
+  test("a purchase_upload row has club_id stamped matching its product's club", async () => {
+    const { data: judo } = await admin.from("club").select("id").eq("slug", "judo").single();
+    const product = await admin
+      .from("product")
+      .insert({ club_id: judo!.id, name: `Upload Test Product ${crypto.randomUUID()}`, kind: "other" })
+      .select("id")
+      .single();
+
+    const { data: upload, error } = await admin
+      .from("purchase_upload")
+      .insert({ club_id: judo!.id, product_id: product.data!.id, row_count: 1, uploaded_by: "test@example.test" })
+      .select("id, club_id")
+      .single();
+    expect(error).toBeNull();
+    expect(upload!.club_id).toBe(judo!.id);
+
+    await admin.from("purchase_upload").delete().eq("id", upload!.id);
+    await admin.from("product").delete().eq("id", product.data!.id);
   });
 });

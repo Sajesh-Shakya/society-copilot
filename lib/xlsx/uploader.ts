@@ -83,6 +83,7 @@ export async function uploadXlsx(clubSlug: string, formData: FormData): Promise<
   const { data: upload, error: uploadError } = await admin
     .from("purchase_upload")
     .insert({
+      club_id: adminUser.clubId,
       product_id: product.id,
       filename: file.name,
       row_count: rows.length,
