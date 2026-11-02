@@ -115,7 +115,7 @@ test.describe("createClubScopedClient", () => {
 
     const { data, error } = await scoped
       .from("product")
-      .upsert({ name, kind: "other" }, { onConflict: "name", ignoreDuplicates: true })
+      .upsert({ name, kind: "other" }, { onConflict: "club_id,name", ignoreDuplicates: true })
       .select("id");
     expect(error).toBeNull();
 
