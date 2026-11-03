@@ -26,9 +26,16 @@ async function createPerson() {
 
 test.describe("setPersonExempt", () => {
   let personId = "";
+  let tkdPersonId = "";
 
   test.afterEach(async () => {
-    if (!personId) return;
+    if (!personId) {
+      if (!tkdPersonId) return;
+      const { error } = await admin.from("person").delete().eq("id", tkdPersonId);
+      if (error) throw error;
+      tkdPersonId = "";
+      return;
+    }
     const { error } = await admin.from("person").delete().eq("id", personId);
     if (error) throw error;
     personId = "";
@@ -36,7 +43,7 @@ test.describe("setPersonExempt", () => {
 
   test("setting exempt=true with a reason records set_by/set_at/reason", async () => {
     personId = await createPerson();
-    await applyPersonExempt({ personId, exempt: true, reason: "Committee member" }, TEST_ADMIN_EMAIL);
+    await applyPersonExempt({ personId, exempt: true, reason: "Committee member" }, judoClubId, TEST_ADMIN_EMAIL);
 
     const { data: row, error } = await admin
       .from("person")
@@ -53,7 +60,7 @@ test.describe("setPersonExempt", () => {
 
   test("setting exempt=true without a reason leaves exempt_reason null", async () => {
     personId = await createPerson();
-    await applyPersonExempt({ personId, exempt: true }, TEST_ADMIN_EMAIL);
+    await applyPersonExempt({ personId, exempt: true }, judoClubId, TEST_ADMIN_EMAIL);
 
     const { data: row, error } = await admin
       .from("person")
@@ -68,8 +75,8 @@ test.describe("setPersonExempt", () => {
 
   test("clearing exempt=false resets set_by/set_at/reason to null", async () => {
     personId = await createPerson();
-    await applyPersonExempt({ personId, exempt: true, reason: "temp" }, TEST_ADMIN_EMAIL);
-    await applyPersonExempt({ personId, exempt: false }, TEST_ADMIN_EMAIL);
+    await applyPersonExempt({ personId, exempt: true, reason: "temp" }, judoClubId, TEST_ADMIN_EMAIL);
+    await applyPersonExempt({ personId, exempt: false }, judoClubId, TEST_ADMIN_EMAIL);
 
     const { data: row, error } = await admin
       .from("person")
@@ -82,5 +89,20 @@ test.describe("setPersonExempt", () => {
     expect(row.exempt_set_by).toBeNull();
     expect(row.exempt_set_at).toBeNull();
     expect(row.exempt_reason).toBeNull();
+  });
+
+  test("refuses to update a person who belongs to a different club", async () => {
+    const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+    const { data: tkdPerson, error } = await admin
+      .from("person")
+      .insert({ club_id: taekwondo!.id, full_name: "Taekwondo Exempt Test", email: `tkd-exempt-${crypto.randomUUID()}@example.test` })
+      .select("id")
+      .single();
+    if (error) throw error;
+    tkdPersonId = tkdPerson!.id;
+
+    await expect(
+      applyPersonExempt({ personId: tkdPerson!.id, exempt: true }, judoClubId, TEST_ADMIN_EMAIL)
+    ).rejects.toThrow();
   });
 });

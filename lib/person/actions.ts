@@ -13,5 +13,5 @@ import { applyPersonExempt, type SetPersonExemptInput } from "@/lib/person/exemp
 // this admin-gated wrapper.
 export async function setPersonExempt(clubSlug: string, input: SetPersonExemptInput): Promise<void> {
   const admin_user = await requireAdmin(clubSlug);
-  await applyPersonExempt(input, admin_user.email);
+  await applyPersonExempt(input, admin_user.clubId, admin_user.email);
 }

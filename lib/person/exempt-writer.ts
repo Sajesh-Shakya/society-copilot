@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 
 const setPersonExemptSchema = z.object({
   personId: z.string().uuid(),
@@ -19,12 +19,13 @@ export type SetPersonExemptInput = z.infer<typeof setPersonExemptSchema>;
 // becoming a client-callable endpoint.
 export async function applyPersonExempt(
   input: SetPersonExemptInput,
+  clubId: string,
   actorEmail: string
 ): Promise<void> {
   const parsed = setPersonExemptSchema.parse(input);
-  const admin = createAdminClient();
+  const scoped = createClubScopedClient(clubId);
 
-  const { error } = await admin
+  const { data, error } = await scoped
     .from("person")
     .update({
       is_exempt: parsed.exempt,
@@ -32,9 +33,13 @@ export async function applyPersonExempt(
       exempt_set_at: parsed.exempt ? new Date().toISOString() : null,
       exempt_reason: parsed.exempt ? (parsed.reason ?? null) : null,
     })
-    .eq("id", parsed.personId);
+    .eq("id", parsed.personId)
+    .select("id");
 
   if (error) {
     throw new Error(`Failed to update exemption for person ${parsed.personId}: ${error.message}`);
+  }
+  if (!data || data.length === 0) {
+    throw new Error(`Person ${parsed.personId} does not belong to this club.`);
   }
 }
