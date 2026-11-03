@@ -1,22 +1,23 @@
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createClubScopedClient } from '@/lib/supabase/club-scoped';
 import { RawPurchaseRow, MatchResult, isStudentMemberType } from './types';
 import { escapeIlikePattern, normalizeCid } from '@/lib/utils';
 
-export async function matchPersonRecord(row: RawPurchaseRow): Promise<MatchResult> {
-  const admin = createAdminClient();
+export async function matchPersonRecord(row: RawPurchaseRow, clubId: string): Promise<MatchResult> {
+  const scoped = createClubScopedClient(clubId);
 
   // Rule 1: If row has CID, look for exact CID match (normalized -- see
   // normalizeCid's doc comment on why a numeric-typed Excel cell can lose
   // the real CID's leading zero).
   if (row.personCid) {
-    const { data } = await admin
+    const { data } = await scoped
       .from('person')
       .select('id')
       .eq('cid', normalizeCid(row.personCid))
       .maybeSingle();
 
     if (data) {
-      return { personId: data.id, matchStatus: 'cid_matched' };
+      const typedData = data as unknown as { id: string };
+      return { personId: typedData.id, matchStatus: 'cid_matched' };
     }
   }
 
@@ -35,14 +36,15 @@ export async function matchPersonRecord(row: RawPurchaseRow): Promise<MatchResul
   // Wildcard-escaped -- see lib/utils.ts's escapeIlikePattern -- so e.g.
   // "j_smith@gmail.com" can't wrongly match an existing "j.smith@gmail.com".
   if (row.personEmail) {
-    const { data } = await admin
+    const { data } = await scoped
       .from('person')
       .select('id')
       .ilike('email', escapeIlikePattern(row.personEmail))
       .maybeSingle();
 
     if (data) {
-      return { personId: data.id, matchStatus: 'email_matched' };
+      const typedData = data as unknown as { id: string };
+      return { personId: typedData.id, matchStatus: 'email_matched' };
     }
   }
 
@@ -57,13 +59,14 @@ export async function matchPersonRecord(row: RawPurchaseRow): Promise<MatchResul
   // failed Rule 1 (Rule 2 already stopped) -- same reasoning as the email
   // fallback those are denied.
   if (row.personName) {
-    const { data } = await admin
+    const { data } = await scoped
       .from('person')
       .select('id')
       .ilike('full_name', escapeIlikePattern(row.personName.trim()));
 
     if (data && data.length === 1) {
-      return { personId: data[0].id, matchStatus: 'name_matched' };
+      const typedData = data as unknown as { id: string }[];
+      return { personId: typedData[0].id, matchStatus: 'name_matched' };
     }
   }
 
@@ -72,13 +75,14 @@ export async function matchPersonRecord(row: RawPurchaseRow): Promise<MatchResul
 }
 
 export async function matchOrQueue(
-  rows: RawPurchaseRow[]
+  rows: RawPurchaseRow[],
+  clubId: string
 ): Promise<{ matched: Map<string, MatchResult>; unmatched: RawPurchaseRow[] }> {
   const matched = new Map<string, MatchResult>();
   const unmatched: RawPurchaseRow[] = [];
 
   for (const row of rows) {
-    const result = await matchPersonRecord(row);
+    const result = await matchPersonRecord(row, clubId);
     if (result.matchStatus === 'unmatched') {
       unmatched.push(row);
     } else {

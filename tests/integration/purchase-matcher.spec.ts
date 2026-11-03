@@ -60,7 +60,8 @@ test.describe("matchPersonRecord", () => {
     // normalized before this function ever sees it -- matchPersonRecord
     // normalizes again anyway, as defense-in-depth for any other caller.
     const result = await matchPersonRecord(
-      row({ personCid: cid7, memberType: "Student", personName: "Matcher Test CID Person" })
+      row({ personCid: cid7, memberType: "Student", personName: "Matcher Test CID Person" }),
+      judoClubId
     );
 
     expect(result).toEqual({ personId, matchStatus: "cid_matched" });
@@ -71,7 +72,8 @@ test.describe("matchPersonRecord", () => {
     await createPerson({ fullName: sharedName }); // no CID recorded at all
 
     const result = await matchPersonRecord(
-      row({ personCid: "99999999", memberType: "Student", personName: sharedName })
+      row({ personCid: "99999999", memberType: "Student", personName: sharedName }),
+      judoClubId
     );
 
     // Rule 2's "no fallback for CID-bearing students" -- a wrong auto-match
@@ -84,7 +86,7 @@ test.describe("matchPersonRecord", () => {
     const personId = await createPerson({ fullName: `Unique Name ${randomUUID()}` });
     const { data: person } = await admin.from("person").select("full_name").eq("id", personId).single();
 
-    const result = await matchPersonRecord(row({ personName: person!.full_name, memberType: "Public" }));
+    const result = await matchPersonRecord(row({ personName: person!.full_name, memberType: "Public" }), judoClubId);
 
     expect(result).toEqual({ personId, matchStatus: "name_matched" });
   });
@@ -94,7 +96,7 @@ test.describe("matchPersonRecord", () => {
     await createPerson({ fullName: sharedName });
     await createPerson({ fullName: sharedName });
 
-    const result = await matchPersonRecord(row({ personName: sharedName, memberType: "Public" }));
+    const result = await matchPersonRecord(row({ personName: sharedName, memberType: "Public" }), judoClubId);
 
     expect(result).toEqual({ matchStatus: "unmatched" });
   });
@@ -105,8 +107,26 @@ test.describe("matchPersonRecord", () => {
     const email = `matcher-specific-${randomUUID()}@example.test`;
     const personId = await createPerson({ fullName: sharedName, email });
 
-    const result = await matchPersonRecord(row({ personName: sharedName, personEmail: email, memberType: "Public" }));
+    const result = await matchPersonRecord(row({ personName: sharedName, personEmail: email, memberType: "Public" }), judoClubId);
 
     expect(result).toEqual({ personId, matchStatus: "email_matched" });
+  });
+
+  test("a CID match never crosses club boundaries, even when the CID string is identical", async () => {
+    const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+    const sharedCid = String(Math.floor(10_000_000 + Math.random() * 80_000_000));
+    const { data: tkdPerson, error } = await admin
+      .from("person")
+      .insert({ club_id: taekwondo!.id, full_name: "Taekwondo CID Person", email: `tkd-matcher-${randomUUID()}@example.test`, cid: sharedCid })
+      .select("id")
+      .single();
+    if (error) throw error;
+    personIds.push(tkdPerson!.id);
+
+    const result = await matchPersonRecord(
+      row({ personCid: sharedCid, memberType: "Student", personName: "Judo Buyer" }),
+      judoClubId
+    );
+    expect(result).toEqual({ matchStatus: "unmatched" }); // the CID exists, but only in Taekwondo
   });
 });
