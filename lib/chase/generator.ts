@@ -1,5 +1,4 @@
-import { createAdminClient } from "@/lib/supabase/admin";
-import { getDefaultClubId } from "@/lib/supabase/default-club";
+import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 import { listActiveDebtCycles } from "@/lib/chase/debt-cycles";
 import { buildChaseEmailContent } from "@/lib/chase/template";
 
@@ -20,15 +19,14 @@ function daysBetween(earlier: Date, later: Date): number {
 // DC-2/DC-3/DC-4/DC-6: draft the next chase_email for every active debt
 // cycle whose cadence has come due. See design.md's "Chase-email cadence"
 // and "Repeat auto-send policy" architecture decisions.
-export async function generateChaseEmails(): Promise<{ created: number }> {
-  const admin = createAdminClient();
-  const clubId = await getDefaultClubId(admin);
-  const cycles = await listActiveDebtCycles();
+export async function generateChaseEmails(clubId: string): Promise<{ created: number }> {
+  const scoped = createClubScopedClient(clubId);
+  const cycles = await listActiveDebtCycles(clubId);
   const now = new Date();
   let created = 0;
 
   for (const cycle of cycles) {
-    const { data: existing, error: existingError } = await admin
+    const { data: existing, error: existingError } = await scoped
       .from("chase_email")
       .select("sequence_number, status, sent_at")
       .eq("person_id", cycle.personId)
@@ -42,7 +40,12 @@ export async function generateChaseEmails(): Promise<{ created: number }> {
       );
     }
 
-    const last = existing?.[0];
+    const existingRows = (existing ?? []) as unknown as {
+      sequence_number: number;
+      status: string;
+      sent_at: string | null;
+    }[];
+    const last = existingRows[0];
     let shouldGenerate = false;
     let nextSequence = 1;
 
@@ -67,8 +70,7 @@ export async function generateChaseEmails(): Promise<{ created: number }> {
     const autoApproved = nextSequence > 1 && process.env.CHASE_AUTO_SEND_REPEATS === "true";
     const status = nextSequence === 1 ? "pending_approval" : autoApproved ? "approved" : "pending_approval";
 
-    const { error: insertError } = await admin.from("chase_email").insert({
-      club_id: clubId,
+    const { error: insertError } = await scoped.from("chase_email").insert({
       person_id: cycle.personId,
       debt_cycle_started_at: cycle.debtCycleStartedAt,
       sequence_number: nextSequence,

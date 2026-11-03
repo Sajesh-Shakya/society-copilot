@@ -86,7 +86,7 @@ test.describe("generateChaseEmails", () => {
     // 7-day default threshold.
     await createAttendance(personId, new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000));
 
-    const result = await generateChaseEmails();
+    const result = await generateChaseEmails(judoClubId);
     expect(result.created).toBeGreaterThanOrEqual(1);
 
     const { data: rows, error } = await admin
@@ -107,8 +107,8 @@ test.describe("generateChaseEmails", () => {
     await createAttendance(personId, new Date(now.getTime() - 20 * 24 * 60 * 60 * 1000));
     await createAttendance(personId, new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000));
 
-    await generateChaseEmails();
-    await generateChaseEmails();
+    await generateChaseEmails(judoClubId);
+    await generateChaseEmails(judoClubId);
 
     const { data: rows, error } = await admin
       .from("chase_email")
@@ -125,7 +125,7 @@ test.describe("generateChaseEmails", () => {
     // Only 2 days old -- under the 7-day threshold.
     await createAttendance(personId, new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000));
 
-    await generateChaseEmails();
+    await generateChaseEmails(judoClubId);
 
     const { data: rows, error } = await admin
       .from("chase_email")
@@ -141,7 +141,7 @@ test.describe("generateChaseEmails", () => {
     await createAttendance(personId, new Date(now.getTime() - 20 * 24 * 60 * 60 * 1000));
     await createAttendance(personId, new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000));
 
-    await generateChaseEmails();
+    await generateChaseEmails(judoClubId);
 
     const { data: rows, error } = await admin
       .from("chase_email")
@@ -169,7 +169,7 @@ test.describe("generateChaseEmails", () => {
     });
     if (insertError) throw insertError;
 
-    const result = await generateChaseEmails();
+    const result = await generateChaseEmails(judoClubId);
     expect(result.created).toBe(1);
 
     const { data: rows, error } = await admin
@@ -205,7 +205,7 @@ test.describe("generateChaseEmails", () => {
       });
       if (insertError) throw insertError;
 
-      await generateChaseEmails();
+      await generateChaseEmails(judoClubId);
 
       const { data: rows, error } = await admin
         .from("chase_email")

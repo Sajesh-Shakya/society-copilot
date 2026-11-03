@@ -17,8 +17,9 @@ export default async function UnpaidPage({
   params: Promise<{ clubSlug: string }>;
 }) {
   const { clubSlug } = await params;
+  let clubId: string;
   try {
-    await requireAdmin(clubSlug);
+    ({ clubId } = await requireAdmin(clubSlug));
   } catch (error) {
     if (error instanceof UnauthorizedError) redirect("/login");
     throw error;
@@ -28,7 +29,7 @@ export default async function UnpaidPage({
   // excludes exempt people, each person's free trial, and anything already
   // waived by a purchase. Sorted worst-first (most unpaid sessions), tied
   // broken by whoever's debt cycle started longest ago.
-  const cycles = (await listActiveDebtCycles()).sort((a, b) => {
+  const cycles = (await listActiveDebtCycles(clubId)).sort((a, b) => {
     if (b.debtCount !== a.debtCount) return b.debtCount - a.debtCount;
     return new Date(a.debtCycleStartedAt).getTime() - new Date(b.debtCycleStartedAt).getTime();
   });
