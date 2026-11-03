@@ -57,7 +57,7 @@ test.describe("approveChaseEmail", () => {
     personId = await createPerson();
     const chaseEmailId = await createChaseEmail(personId, "pending_approval");
 
-    const result = await approveChaseEmail(chaseEmailId, TEST_ADMIN_EMAIL);
+    const result = await approveChaseEmail(chaseEmailId, judoClubId, TEST_ADMIN_EMAIL);
     expect(result.approved).toBe(true);
 
     const { data: row, error } = await admin
@@ -75,7 +75,7 @@ test.describe("approveChaseEmail", () => {
     personId = await createPerson();
     const chaseEmailId = await createChaseEmail(personId, "sent");
 
-    const result = await approveChaseEmail(chaseEmailId, TEST_ADMIN_EMAIL);
+    const result = await approveChaseEmail(chaseEmailId, judoClubId, TEST_ADMIN_EMAIL);
     expect(result.approved).toBe(false);
 
     const { data: row, error } = await admin
@@ -92,7 +92,7 @@ test.describe("approveChaseEmail", () => {
     personId = await createPerson();
     const chaseEmailId = await createChaseEmail(personId, "failed");
 
-    const result = await approveChaseEmail(chaseEmailId, TEST_ADMIN_EMAIL);
+    const result = await approveChaseEmail(chaseEmailId, judoClubId, TEST_ADMIN_EMAIL);
     expect(result.approved).toBe(true);
 
     const { data: row, error } = await admin
@@ -122,7 +122,7 @@ test.describe("rejectChaseEmail", () => {
     personId = await createPerson();
     const chaseEmailId = await createChaseEmail(personId, "pending_approval");
 
-    const result = await rejectChaseEmail(chaseEmailId, "Wrong person, they already paid in cash.", TEST_ADMIN_EMAIL);
+    const result = await rejectChaseEmail(chaseEmailId, judoClubId, "Wrong person, they already paid in cash.", TEST_ADMIN_EMAIL);
     expect(result.rejected).toBe(true);
 
     const { data: row, error } = await admin
@@ -140,7 +140,7 @@ test.describe("rejectChaseEmail", () => {
     personId = await createPerson();
     const chaseEmailId = await createChaseEmail(personId, "approved");
 
-    const result = await rejectChaseEmail(chaseEmailId, "Duplicate draft.", TEST_ADMIN_EMAIL);
+    const result = await rejectChaseEmail(chaseEmailId, judoClubId, "Duplicate draft.", TEST_ADMIN_EMAIL);
     expect(result.rejected).toBe(true);
 
     const { data: row, error } = await admin.from("chase_email").select("status").eq("id", chaseEmailId).single();
@@ -152,7 +152,7 @@ test.describe("rejectChaseEmail", () => {
     personId = await createPerson();
     const chaseEmailId = await createChaseEmail(personId, "sent");
 
-    const result = await rejectChaseEmail(chaseEmailId, "too late", TEST_ADMIN_EMAIL);
+    const result = await rejectChaseEmail(chaseEmailId, judoClubId, "too late", TEST_ADMIN_EMAIL);
     expect(result.rejected).toBe(false);
 
     const { data: row, error } = await admin.from("chase_email").select("status, note").eq("id", chaseEmailId).single();
@@ -165,7 +165,7 @@ test.describe("rejectChaseEmail", () => {
     personId = await createPerson();
     const chaseEmailId = await createChaseEmail(personId, "failed");
 
-    const result = await rejectChaseEmail(chaseEmailId, "Email address is permanently undeliverable.", TEST_ADMIN_EMAIL);
+    const result = await rejectChaseEmail(chaseEmailId, judoClubId, "Email address is permanently undeliverable.", TEST_ADMIN_EMAIL);
     expect(result.rejected).toBe(true);
 
     const { data: row, error } = await admin
@@ -182,13 +182,13 @@ test.describe("rejectChaseEmail", () => {
     personId = await createPerson();
     const chaseEmailId = await createChaseEmail(personId, "pending_approval");
 
-    await expect(rejectChaseEmail(chaseEmailId, "", TEST_ADMIN_EMAIL)).rejects.toThrow();
+    await expect(rejectChaseEmail(chaseEmailId, judoClubId, "", TEST_ADMIN_EMAIL)).rejects.toThrow();
   });
 
   test("rejects a whitespace-only note as invalid input", async () => {
     personId = await createPerson();
     const chaseEmailId = await createChaseEmail(personId, "pending_approval");
 
-    await expect(rejectChaseEmail(chaseEmailId, "   ", TEST_ADMIN_EMAIL)).rejects.toThrow();
+    await expect(rejectChaseEmail(chaseEmailId, judoClubId, "   ", TEST_ADMIN_EMAIL)).rejects.toThrow();
   });
 });

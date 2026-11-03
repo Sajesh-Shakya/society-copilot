@@ -1,4 +1,4 @@
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 import { getOutstandingDebt } from "@/lib/debt/calculator";
 import type { EmailChannelAdapter } from "@/lib/email/types";
 import { resendEmailAdapter } from "@/lib/email/resend-adapter";
@@ -14,18 +14,25 @@ import { resendEmailAdapter } from "@/lib/email/resend-adapter";
 // chase-email-sending-design.md.
 export async function sendChaseEmail(
   chaseEmailId: string,
+  clubId: string,
   adapter: EmailChannelAdapter = resendEmailAdapter
 ): Promise<{ sent: boolean; reason?: string }> {
-  const admin = createAdminClient();
+  const scoped = createClubScopedClient(clubId);
 
-  const { data: row, error: fetchError } = await admin
+  const { data: row, error: fetchError } = (await scoped
     .from("chase_email")
     .select("id, person_id, status, subject, body")
     .eq("id", chaseEmailId)
-    .single();
+    .maybeSingle()) as unknown as {
+    data: { id: string; person_id: string; status: string; subject: string; body: string } | null;
+    error: { message: string } | null;
+  };
 
   if (fetchError) {
     throw new Error(`Failed to fetch chase_email ${chaseEmailId}: ${fetchError.message}`);
+  }
+  if (!row) {
+    throw new Error(`chase_email ${chaseEmailId} does not belong to this club.`);
   }
   if (row.status !== "approved") {
     throw new Error(
@@ -33,17 +40,20 @@ export async function sendChaseEmail(
     );
   }
 
-  const { data: person, error: personError } = await admin
+  const { data: person, error: personError } = (await scoped
     .from("person")
     .select("is_exempt, email")
     .eq("id", row.person_id)
-    .single();
+    .single()) as unknown as {
+    data: { is_exempt: boolean; email: string };
+    error: { message: string } | null;
+  };
   if (personError) {
     throw new Error(`Failed to fetch person ${row.person_id}: ${personError.message}`);
   }
 
   if (person.is_exempt) {
-    const { error: cancelError } = await admin
+    const { error: cancelError } = await scoped
       .from("chase_email")
       .update({
         status: "cancelled",
@@ -60,7 +70,7 @@ export async function sendChaseEmail(
   const debt = await getOutstandingDebt(row.person_id);
 
   if (debt <= 0) {
-    const { error: cancelError } = await admin
+    const { error: cancelError } = await scoped
       .from("chase_email")
       .update({
         status: "cancelled",
@@ -79,7 +89,7 @@ export async function sendChaseEmail(
   // same row, only one caller's conditional update affects a row -- the
   // other affects zero rows and bails out as 'stale'. See design.md's
   // "Atomic claim before sending" decision.
-  const { data: claimedRows, error: claimError } = await admin
+  const { data: claimedRows, error: claimError } = await scoped
     .from("chase_email")
     .update({ status: "sending" })
     .eq("id", chaseEmailId)
@@ -106,7 +116,7 @@ export async function sendChaseEmail(
       idempotencyKey: chaseEmailId,
     });
 
-    const { error: sendError } = await admin
+    const { error: sendError } = await scoped
       .from("chase_email")
       .update({
         status: "sent",
@@ -129,7 +139,7 @@ export async function sendChaseEmail(
     // a real duplicate if the first attempt actually went out.
     const message =
       sendAttemptError instanceof Error ? sendAttemptError.message : String(sendAttemptError);
-    const { error: failError } = await admin
+    const { error: failError } = await scoped
       .from("chase_email")
       .update({ status: "failed", note: message.slice(0, 1000) })
       .eq("id", chaseEmailId);
@@ -145,6 +155,7 @@ export async function sendChaseEmail(
 // touches sequence_number = 1 rows -- those always require manual approval
 // (DC-3) and reach `approved` only through a future Phase 7 admin action.
 export async function processAutoSends(
+  clubId: string,
   adapter: EmailChannelAdapter = resendEmailAdapter
 ): Promise<{
   sent: number;
@@ -155,12 +166,15 @@ export async function processAutoSends(
     return { sent: 0, cancelled: 0, failed: 0 };
   }
 
-  const admin = createAdminClient();
-  const { data: rows, error } = await admin
+  const scoped = createClubScopedClient(clubId);
+  const { data: rows, error } = (await scoped
     .from("chase_email")
     .select("id")
     .eq("status", "approved")
-    .gt("sequence_number", 1);
+    .gt("sequence_number", 1)) as unknown as {
+    data: { id: string }[] | null;
+    error: { message: string } | null;
+  };
 
   if (error) {
     throw new Error(`Failed to list auto-sendable chase emails: ${error.message}`);
@@ -172,7 +186,7 @@ export async function processAutoSends(
   let failed = 0;
 
   for (let i = 0; i < rowsToSend.length; i++) {
-    const result = await sendChaseEmail(rowsToSend[i].id, adapter);
+    const result = await sendChaseEmail(rowsToSend[i].id, clubId, adapter);
     if (result.sent) sent++;
     else if (result.reason === "send_failed") failed++;
     else cancelled++;

@@ -14,15 +14,15 @@ import { sendChaseEmail } from "@/lib/chase/send";
 
 export async function approveChase(clubSlug: string, chaseEmailId: string): Promise<{ approved: boolean }> {
   const admin = await requireAdmin(clubSlug);
-  return approveChaseEmail(chaseEmailId, admin.email);
+  return approveChaseEmail(chaseEmailId, admin.clubId, admin.email);
 }
 
 export async function sendChase(clubSlug: string, chaseEmailId: string): Promise<{ sent: boolean; reason?: string }> {
-  await requireAdmin(clubSlug);
-  return sendChaseEmail(chaseEmailId);
+  const admin = await requireAdmin(clubSlug);
+  return sendChaseEmail(chaseEmailId, admin.clubId);
 }
 
 export async function rejectChase(clubSlug: string, chaseEmailId: string, note: string): Promise<{ rejected: boolean }> {
   const admin = await requireAdmin(clubSlug);
-  return rejectChaseEmail(chaseEmailId, note, admin.email);
+  return rejectChaseEmail(chaseEmailId, admin.clubId, note, admin.email);
 }

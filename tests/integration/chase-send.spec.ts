@@ -101,7 +101,7 @@ test.describe("sendChaseEmail", () => {
     await createAttendance(personId, new Date(Date.now() - 10 * 24 * 60 * 60 * 1000));
     const chaseEmailId = await createApprovedChaseEmail(personId);
 
-    const result = await sendChaseEmail(chaseEmailId, fakeAdapter());
+    const result = await sendChaseEmail(chaseEmailId, judoClubId, fakeAdapter());
     expect(result.sent).toBe(true);
 
     const { data: row, error } = await admin
@@ -135,7 +135,7 @@ test.describe("sendChaseEmail", () => {
       providerMessageId: "msg_abc",
     });
 
-    const result = await sendChaseEmail(chaseEmailId, adapter);
+    const result = await sendChaseEmail(chaseEmailId, judoClubId, adapter);
     expect(result.sent).toBe(true);
     expect(capturedInput).not.toBeNull();
     expect(capturedInput!.to).toBe(person.email);
@@ -157,7 +157,7 @@ test.describe("sendChaseEmail", () => {
     await createAttendance(personId, new Date(Date.now() - 10 * 24 * 60 * 60 * 1000));
     const chaseEmailId = await createApprovedChaseEmail(personId);
 
-    const result = await sendChaseEmail(chaseEmailId, fakeAdapter({ shouldFail: true }));
+    const result = await sendChaseEmail(chaseEmailId, judoClubId, fakeAdapter({ shouldFail: true }));
     expect(result.sent).toBe(false);
     expect(result.reason).toBe("send_failed");
 
@@ -186,8 +186,8 @@ test.describe("sendChaseEmail", () => {
     });
 
     const [first, second] = await Promise.all([
-      sendChaseEmail(chaseEmailId, adapter),
-      sendChaseEmail(chaseEmailId, adapter),
+      sendChaseEmail(chaseEmailId, judoClubId, adapter),
+      sendChaseEmail(chaseEmailId, judoClubId, adapter),
     ]);
 
     const results = [first, second];
@@ -203,7 +203,7 @@ test.describe("sendChaseEmail", () => {
     // No attendance at all -- debt is 0.
     const chaseEmailId = await createApprovedChaseEmail(personId);
 
-    const result = await sendChaseEmail(chaseEmailId);
+    const result = await sendChaseEmail(chaseEmailId, judoClubId);
     expect(result.sent).toBe(false);
     expect(result.reason).toBe("debt_cleared");
 
@@ -228,7 +228,7 @@ test.describe("sendChaseEmail", () => {
       const firstId = await createApprovedChaseEmail(personId, 1);
       const repeatId = await createApprovedChaseEmail(personId, 2);
 
-      const result = await processAutoSends(fakeAdapter());
+      const result = await processAutoSends(judoClubId, fakeAdapter());
       expect(result.sent).toBeGreaterThanOrEqual(1);
 
       const { data: first, error: firstError } = await admin
@@ -261,7 +261,7 @@ test.describe("sendChaseEmail", () => {
       await createAttendance(personId, new Date(Date.now() - 10 * 24 * 60 * 60 * 1000));
       const repeatId = await createApprovedChaseEmail(personId, 2);
 
-      const result = await processAutoSends();
+      const result = await processAutoSends(judoClubId);
       expect(result).toEqual({ sent: 0, cancelled: 0, failed: 0 });
 
       const { data: repeat, error } = await admin
@@ -298,7 +298,7 @@ test.describe("sendChaseEmail", () => {
       // single always-succeeding fake is enough to prove both outcomes.
       const adapter = fakeAdapter({ onSend: () => { callCount++; } });
 
-      const result = await processAutoSends(adapter);
+      const result = await processAutoSends(judoClubId, adapter);
       expect(result.sent).toBe(1);
       expect(result.cancelled).toBe(1);
       expect(result.failed).toBe(0);
@@ -339,7 +339,7 @@ test.describe("sendChaseEmail", () => {
       await createAttendance(personId, new Date(Date.now() - 10 * 24 * 60 * 60 * 1000));
       const chaseEmailId = await createApprovedChaseEmail(personId, 2);
 
-      const result = await processAutoSends(fakeAdapter({ shouldFail: true }));
+      const result = await processAutoSends(judoClubId, fakeAdapter({ shouldFail: true }));
       expect(result.sent).toBe(0);
       expect(result.cancelled).toBe(0);
       expect(result.failed).toBe(1);
@@ -355,5 +355,35 @@ test.describe("sendChaseEmail", () => {
       if (originalFlag === undefined) delete process.env.CHASE_AUTO_SEND_REPEATS;
       else process.env.CHASE_AUTO_SEND_REPEATS = originalFlag;
     }
+  });
+
+  test("sendChaseEmail refuses a chaseEmailId that belongs to a different club", async () => {
+    const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+    const { data: tkdPerson, error: personError } = await admin
+      .from("person")
+      .insert({ club_id: taekwondo!.id, full_name: "Taekwondo Chase Person", email: `tkd-chase-send-${crypto.randomUUID()}@example.test` })
+      .select("id")
+      .single();
+    if (personError) throw personError;
+
+    const { data: tkdChase, error: chaseError } = await admin
+      .from("chase_email")
+      .insert({
+        club_id: taekwondo!.id,
+        person_id: tkdPerson!.id,
+        debt_cycle_started_at: new Date().toISOString(),
+        sequence_number: 1,
+        status: "approved",
+        subject: "test",
+        body: "test",
+      })
+      .select("id")
+      .single();
+    if (chaseError) throw chaseError;
+
+    await expect(sendChaseEmail(tkdChase!.id, judoClubId, fakeAdapter())).rejects.toThrow();
+
+    await admin.from("chase_email").delete().eq("id", tkdChase!.id);
+    await admin.from("person").delete().eq("id", tkdPerson!.id);
   });
 });

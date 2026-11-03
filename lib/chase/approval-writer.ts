@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 
 const rejectChaseEmailSchema = z.object({
   chaseEmailId: z.string().uuid(),
@@ -26,10 +26,11 @@ const rejectChaseEmailSchema = z.object({
 
 export async function approveChaseEmail(
   chaseEmailId: string,
+  clubId: string,
   actorEmail: string
 ): Promise<{ approved: boolean }> {
-  const admin = createAdminClient();
-  const { data, error } = await admin
+  const scoped = createClubScopedClient(clubId);
+  const { data, error } = await scoped
     .from("chase_email")
     .update({ status: "approved", approved_by: actorEmail, approved_at: new Date().toISOString() })
     .eq("id", chaseEmailId)
@@ -48,16 +49,17 @@ export async function approveChaseEmail(
 // function.
 export async function rejectChaseEmail(
   chaseEmailId: string,
+  clubId: string,
   note: string,
   actorEmail: string
 ): Promise<{ rejected: boolean }> {
   const parsed = rejectChaseEmailSchema.parse({ chaseEmailId, note, actorEmail });
-  const admin = createAdminClient();
+  const scoped = createClubScopedClient(clubId);
   // Prefix with who/when rather than adding a new column -- chase_email's
   // own columns are this feature's audit trail (see design.md), and this
   // is the one write path that previously dropped that attribution.
   const attributedNote = `${parsed.actorEmail} @ ${new Date().toISOString()}: ${parsed.note}`;
-  const { data, error } = await admin
+  const { data, error } = await scoped
     .from("chase_email")
     .update({ status: "cancelled", note: attributedNote })
     .eq("id", parsed.chaseEmailId)

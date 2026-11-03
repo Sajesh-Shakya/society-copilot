@@ -26,7 +26,7 @@ export default async function SessionsIndexPage({
 
   const [sessions, failedChaseCount] = await Promise.all([
     listRecentSessions(clubId),
-    countFailedChaseEmails(),
+    countFailedChaseEmails(clubId),
   ]);
   const todaySessions = sessions.filter((s) => s.isToday);
   // `sessions` is newest-starting-first overall; for "what's coming up"

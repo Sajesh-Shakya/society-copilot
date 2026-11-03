@@ -53,14 +53,14 @@ test.describe("countFailedChaseEmails", () => {
   });
 
   test("counts only failed rows, not other statuses", async () => {
-    const before = await countFailedChaseEmails();
+    const before = await countFailedChaseEmails(judoClubId);
 
     personId = await createPerson();
     await createChaseEmail(personId, "failed");
     await createChaseEmail(personId, "sent");
     await createChaseEmail(personId, "approved");
 
-    const after = await countFailedChaseEmails();
+    const after = await countFailedChaseEmails(judoClubId);
     expect(after).toBe(before + 1);
   });
 });
