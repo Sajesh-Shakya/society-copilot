@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { generateChaseEmails } from "@/lib/chase/generator";
 import { processAutoSends } from "@/lib/chase/send";
 import { reapplyWaiversForEveryoneWithDebt } from "@/lib/purchase/interface";
@@ -14,13 +15,38 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  // Safety-net sweep, not the primary fix (see
-  // reapplyWaiversForEveryoneWithDebt's doc comment) -- runs first so
-  // anything it catches is resolved before generateChaseEmails can turn
-  // it into an undeserved chase email.
-  const reapplied = await reapplyWaiversForEveryoneWithDebt();
-  const generated = await generateChaseEmails();
-  const sent = await processAutoSends();
+  const admin = createAdminClient();
+  const { data: clubs, error: clubsError } = await admin.from("club").select("id, slug");
+  if (clubsError) {
+    return NextResponse.json({ error: `Failed to list clubs: ${clubsError.message}` }, { status: 500 });
+  }
 
-  return NextResponse.json({ reapplied, generated, sent });
+  const results: {
+    clubSlug: string;
+    reapplied?: Awaited<ReturnType<typeof reapplyWaiversForEveryoneWithDebt>>;
+    generated?: Awaited<ReturnType<typeof generateChaseEmails>>;
+    sent?: Awaited<ReturnType<typeof processAutoSends>>;
+    error?: string;
+  }[] = [];
+
+  for (const club of clubs ?? []) {
+    try {
+      // Safety-net sweep, not the primary fix (see
+      // reapplyWaiversForEveryoneWithDebt's doc comment) -- runs first so
+      // anything it catches is resolved before generateChaseEmails can turn
+      // it into an undeserved chase email.
+      const reapplied = await reapplyWaiversForEveryoneWithDebt(club.id);
+      const generated = await generateChaseEmails(club.id);
+      const sent = await processAutoSends(club.id);
+      results.push({ clubSlug: club.slug, reapplied, generated, sent });
+    } catch (error) {
+      // One club's failure (e.g. a bad row, a transient Resend outage)
+      // must never block the rest -- same reasoning as ingestPurchases's
+      // per-row try/catch.
+      console.error(`Chase-email cron failed for club "${club.slug}":`, error);
+      results.push({ clubSlug: club.slug, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  return NextResponse.json({ results });
 }
