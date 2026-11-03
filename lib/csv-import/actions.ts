@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth/require-admin";
+import { assertSessionBelongsToClub } from "@/lib/attendance/queries";
 import { parseAttendeeCsv, isCsvFile } from "./parser";
 import {
   createSessionFromCsvSchema,
@@ -24,7 +25,7 @@ export async function createSessionFromCsv(
   clubSlug: string,
   formData: FormData
 ): Promise<CreateSessionFromCsvResult> {
-  await requireAdmin(clubSlug);
+  const { clubId } = await requireAdmin(clubSlug);
 
   const parsed = createSessionFromCsvSchema.safeParse({
     title: String(formData.get("title") ?? ""),
@@ -54,11 +55,10 @@ export async function createSessionFromCsv(
   }
 
   try {
-    const result = await importAttendanceCsv({
-      title: parsed.data.title,
-      startsAt: parsed.data.startsAt,
-      rows,
-    });
+    const result = await importAttendanceCsv(
+      { title: parsed.data.title, startsAt: parsed.data.startsAt, rows },
+      clubId
+    );
     return {
       success: true,
       message: `Imported ${result.imported} attendee(s).`,
@@ -96,12 +96,13 @@ export async function syncCsvToSession(
   sessionId: string,
   formData: FormData
 ): Promise<SyncCsvToSessionResult> {
-  await requireAdmin(clubSlug);
+  const { clubId } = await requireAdmin(clubSlug);
 
   const parsedSessionId = sessionIdSchema.safeParse(sessionId);
   if (!parsedSessionId.success) {
     return { success: false, message: "Invalid session." };
   }
+  await assertSessionBelongsToClub(parsedSessionId.data, clubId);
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) {
@@ -123,7 +124,7 @@ export async function syncCsvToSession(
   }
 
   try {
-    const result = await syncAttendanceCsv({ sessionId: parsedSessionId.data, rows });
+    const result = await syncAttendanceCsv({ sessionId: parsedSessionId.data, rows }, clubId);
     const parts = [`${result.added} added`];
     if (result.removed > 0) parts.push(`${result.removed} removed (no longer signed up)`);
     if (result.skipped > 0) parts.push(`${result.skipped} unchanged`);

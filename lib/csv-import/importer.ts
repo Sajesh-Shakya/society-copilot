@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { getDefaultClubId } from "@/lib/supabase/default-club";
+import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
 import type { AttendeeRow } from "./parser";
 
@@ -23,7 +22,7 @@ export interface ImportAttendanceCsvResult {
   imported: number;
 }
 
-type AdminClient = ReturnType<typeof createAdminClient>;
+type ScopedClient = ReturnType<typeof createClubScopedClient>;
 
 /**
  * Matches a CSV row to an existing person, creating one if none exists.
@@ -54,21 +53,21 @@ type AdminClient = ReturnType<typeof createAdminClient>;
  * not grounds to silently rewrite someone's contact email or override a
  * previously-confirmed CID.
  */
-async function findOrCreatePersonByEmail(admin: AdminClient, row: AttendeeRow, clubId: string): Promise<string> {
+async function findOrCreatePersonByEmail(scoped: ScopedClient, row: AttendeeRow): Promise<string> {
   const email = row.email.toLowerCase();
   const cid = row.rawCidOrCardNumber ? normalizeCid(row.rawCidOrCardNumber) : null;
 
   if (cid) {
-    const { data: byCid, error: cidLookupError } = await admin
+    const { data: byCid, error: cidLookupError } = await scoped
       .from("person")
       .select("id")
       .eq("cid", cid)
       .maybeSingle();
     if (cidLookupError) throw cidLookupError;
-    if (byCid) return byCid.id;
+    if (byCid) return (byCid as unknown as { id: string }).id;
   }
 
-  const { data: byEmail, error: emailLookupError } = await admin
+  const { data: byEmail, error: emailLookupError } = await scoped
     .from("person")
     .select("id, cid")
     .ilike("email", escapeIlikePattern(email))
@@ -76,17 +75,17 @@ async function findOrCreatePersonByEmail(admin: AdminClient, row: AttendeeRow, c
   if (emailLookupError) throw emailLookupError;
 
   if (byEmail) {
-    if (cid && !byEmail.cid) {
-      const { error: backfillError } = await admin.from("person").update({ cid }).eq("id", byEmail.id);
+    const typedByEmail = byEmail as unknown as { id: string; cid: string | null };
+    if (cid && !typedByEmail.cid) {
+      const { error: backfillError } = await scoped.from("person").update({ cid }).eq("id", typedByEmail.id);
       if (backfillError) throw backfillError;
     }
-    return byEmail.id;
+    return typedByEmail.id;
   }
 
-  const { data: created, error: personError } = await admin
+  const { data: created, error: personError } = await scoped
     .from("person")
     .insert({
-      club_id: clubId,
       email: row.email,
       full_name: `${row.firstName} ${row.surname}`.trim(),
       identity_confidence: "confirmed",
@@ -95,7 +94,7 @@ async function findOrCreatePersonByEmail(admin: AdminClient, row: AttendeeRow, c
     .select("id")
     .single();
   if (personError) throw personError;
-  return created.id;
+  return (created as unknown as { id: string }).id;
 }
 
 /**
@@ -119,25 +118,25 @@ async function findOrCreatePersonByEmail(admin: AdminClient, row: AttendeeRow, c
  * surfaces this as a failure and the admin can inspect/retry.
  */
 export async function importAttendanceCsv(
-  input: ImportAttendanceCsvInput
+  input: ImportAttendanceCsvInput,
+  clubId: string
 ): Promise<ImportAttendanceCsvResult> {
-  const admin = createAdminClient();
-  const clubId = await getDefaultClubId(admin);
+  const scoped = createClubScopedClient(clubId);
 
-  const { data: session, error: sessionError } = await admin
+  const { data: session, error: sessionError } = await scoped
     .from("session")
-    .insert({ club_id: clubId, title: input.title, starts_at: new Date(input.startsAt).toISOString() })
+    .insert({ title: input.title, starts_at: new Date(input.startsAt).toISOString() })
     .select("id")
     .single();
   if (sessionError) throw sessionError;
+  const typedSession = session as unknown as { id: string };
 
   for (const row of input.rows) {
-    const personId = await findOrCreatePersonByEmail(admin, row, clubId);
+    const personId = await findOrCreatePersonByEmail(scoped, row);
 
-    const { error: attendanceError } = await admin.from("attendance_record").insert({
-      club_id: clubId,
+    const { error: attendanceError } = await scoped.from("attendance_record").insert({
       person_id: personId,
-      session_id: session.id,
+      session_id: typedSession.id,
       source: "csv_import",
       attended: false,
       raw_cid_or_card_number: row.rawCidOrCardNumber,
@@ -145,7 +144,7 @@ export async function importAttendanceCsv(
     if (attendanceError) throw attendanceError;
   }
 
-  return { sessionId: session.id, imported: input.rows.length };
+  return { sessionId: typedSession.id, imported: input.rows.length };
 }
 
 export interface SyncAttendanceCsvInput {
@@ -185,16 +184,15 @@ export interface SyncAttendanceCsvResult {
  * importAttendanceCsv above.
  */
 export async function syncAttendanceCsv(
-  input: SyncAttendanceCsvInput
+  input: SyncAttendanceCsvInput,
+  clubId: string
 ): Promise<SyncAttendanceCsvResult> {
-  const admin = createAdminClient();
-  const clubId = await getDefaultClubId(admin);
+  const scoped = createClubScopedClient(clubId);
 
   const records = [];
   for (const row of input.rows) {
-    const personId = await findOrCreatePersonByEmail(admin, row, clubId);
+    const personId = await findOrCreatePersonByEmail(scoped, row);
     records.push({
-      club_id: clubId,
       person_id: personId,
       session_id: input.sessionId,
       source: "csv_import" as const,
@@ -203,7 +201,7 @@ export async function syncAttendanceCsv(
     });
   }
 
-  const { data: upserted, error: upsertError } = await admin
+  const { data: upserted, error: upsertError } = await scoped
     .from("attendance_record")
     .upsert(records, { onConflict: "person_id,session_id", ignoreDuplicates: true })
     .select("id");
@@ -212,7 +210,7 @@ export async function syncAttendanceCsv(
 
   const newEmails = new Set(input.rows.map((row) => row.email.toLowerCase()));
 
-  const { data: existingCsvRows, error: existingError } = await admin
+  const { data: existingCsvRows, error: existingError } = await scoped
     .from("attendance_record")
     .select("id, person:person_id(email)")
     .eq("session_id", input.sessionId)
@@ -220,7 +218,12 @@ export async function syncAttendanceCsv(
     .eq("attended", false);
   if (existingError) throw existingError;
 
-  const idsToRemove = (existingCsvRows ?? [])
+  const typedExistingCsvRows = (existingCsvRows ?? []) as unknown as Array<{
+    id: string;
+    person: { email: string } | { email: string }[];
+  }>;
+
+  const idsToRemove = typedExistingCsvRows
     .filter((record) => {
       // supabase-js types a to-one FK select as an array; it's always
       // exactly one row here since person_id is not-null with a FK.
@@ -231,12 +234,18 @@ export async function syncAttendanceCsv(
 
   let removed = 0;
   if (idsToRemove.length > 0) {
-    const { error: deleteError, count } = await admin
+    // createClubScopedClient's delete() wrapper takes no options (unlike
+    // the raw admin client's delete({ count: "exact" })), so there's no
+    // DB-reported count to read here. Falling back to idsToRemove.length
+    // is equivalent in practice: those ids were just fetched moments ago
+    // under the same club scope, and .in() deletes exactly the rows that
+    // still match.
+    const { error: deleteError } = await scoped
       .from("attendance_record")
-      .delete({ count: "exact" })
+      .delete()
       .in("id", idsToRemove);
     if (deleteError) throw deleteError;
-    removed = count ?? idsToRemove.length;
+    removed = idsToRemove.length;
   }
 
   return { added, skipped: input.rows.length - added, removed };

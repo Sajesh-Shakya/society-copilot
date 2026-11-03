@@ -64,11 +64,14 @@ test.describe("importAttendanceCsv", () => {
 
   test("creates a session and one attendance_record per row, source csv_import, attended false", async () => {
     const rows = [row(), row()];
-    const result = await importAttendanceCsv({
-      title: "CSV Import Test Session",
-      startsAt: "2026-10-15T18:00:00.000Z",
-      rows,
-    });
+    const result = await importAttendanceCsv(
+      {
+        title: "CSV Import Test Session",
+        startsAt: "2026-10-15T18:00:00.000Z",
+        rows,
+      },
+      judoClubId
+    );
     sessionIds.push(result.sessionId);
     expect(result.imported).toBe(2);
 
@@ -102,11 +105,14 @@ test.describe("importAttendanceCsv", () => {
     if (error) throw error;
     personIds.push(existing.id);
 
-    const result = await importAttendanceCsv({
-      title: "CSV Import Reuse Test",
-      startsAt: "2026-10-15T18:00:00.000Z",
-      rows: [row({ email })],
-    });
+    const result = await importAttendanceCsv(
+      {
+        title: "CSV Import Reuse Test",
+        startsAt: "2026-10-15T18:00:00.000Z",
+        rows: [row({ email })],
+      },
+      judoClubId
+    );
     sessionIds.push(result.sessionId);
 
     const { count: personCount } = await admin
@@ -133,11 +139,14 @@ test.describe("importAttendanceCsv", () => {
     if (error) throw error;
     personIds.push(existing.id);
 
-    const result = await importAttendanceCsv({
-      title: "CSV Import Case Test",
-      startsAt: "2026-10-15T18:00:00.000Z",
-      rows: [row({ email: email.toUpperCase() })],
-    });
+    const result = await importAttendanceCsv(
+      {
+        title: "CSV Import Case Test",
+        startsAt: "2026-10-15T18:00:00.000Z",
+        rows: [row({ email: email.toUpperCase() })],
+      },
+      judoClubId
+    );
     sessionIds.push(result.sessionId);
 
     const { count: personCount } = await admin
@@ -148,11 +157,14 @@ test.describe("importAttendanceCsv", () => {
   });
 
   test("stores rawCidOrCardNumber on the attendance_record for audit (zero-padded)", async () => {
-    const result = await importAttendanceCsv({
-      title: "CSV Import Raw CID Test",
-      startsAt: "2026-10-15T18:00:00.000Z",
-      rows: [row({ rawCidOrCardNumber: "2577809" })],
-    });
+    const result = await importAttendanceCsv(
+      {
+        title: "CSV Import Raw CID Test",
+        startsAt: "2026-10-15T18:00:00.000Z",
+        rows: [row({ rawCidOrCardNumber: "2577809" })],
+      },
+      judoClubId
+    );
     sessionIds.push(result.sessionId);
 
     const { data: record } = await admin
@@ -181,11 +193,14 @@ test.describe("importAttendanceCsv", () => {
     // which person_cid_unique_idx rejects (two people can't share a real
     // CID). CID-first matching finds the existing person before that
     // ever happens.
-    const result = await importAttendanceCsv({
-      title: "CSV Import CID Collision Test",
-      startsAt: "2026-10-15T18:00:00.000Z",
-      rows: [row({ email: `a-completely-different-email-${crypto.randomUUID()}@example.test`, rawCidOrCardNumber: cid })],
-    });
+    const result = await importAttendanceCsv(
+      {
+        title: "CSV Import CID Collision Test",
+        startsAt: "2026-10-15T18:00:00.000Z",
+        rows: [row({ email: `a-completely-different-email-${crypto.randomUUID()}@example.test`, rawCidOrCardNumber: cid })],
+      },
+      judoClubId
+    );
     sessionIds.push(result.sessionId);
 
     const { count: personCount } = await admin
@@ -212,6 +227,34 @@ test.describe("importAttendanceCsv", () => {
     expect(unchangedPerson!.full_name).toBe("Existing CID Person");
   });
 
+  test("never matches an existing person from a different club, even with the same email", async () => {
+    const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+    const sharedEmail = `csv-import-cross-club-${crypto.randomUUID()}@example.test`;
+    const { data: tkdPerson, error } = await admin
+      .from("person")
+      .insert({ club_id: taekwondo!.id, full_name: "Taekwondo Person", email: sharedEmail })
+      .select("id")
+      .single();
+    if (error) throw error;
+
+    const result = await importAttendanceCsv(
+      { title: "CSV Cross-Club Test", startsAt: "2026-10-15T18:00:00.000Z", rows: [row({ email: sharedEmail })] },
+      judoClubId
+    );
+    sessionIds.push(result.sessionId);
+
+    const { data: record } = await admin
+      .from("attendance_record")
+      .select("person_id, person:person_id(club_id)")
+      .eq("session_id", result.sessionId)
+      .single();
+    const person = Array.isArray(record!.person) ? record!.person[0] : record!.person;
+    expect(person.club_id).toBe(judoClubId); // a NEW Judo person, not the Taekwondo one
+    personIds.push(record!.person_id);
+
+    await admin.from("person").delete().eq("id", tkdPerson!.id);
+  });
+
   test("a duplicate email within the same file (bypassing the parser's guard) still throws a comprehensible DB error", async () => {
     const email = `csv-import-dup-${crypto.randomUUID()}@example.test`;
     // The real createSessionFromCsv action path now rejects a duplicate
@@ -229,11 +272,14 @@ test.describe("importAttendanceCsv", () => {
     // `message` property directly matches what actually gets thrown
     // without changing that production behavior.
     await expect(
-      importAttendanceCsv({
-        title: "CSV Import Duplicate Test",
-        startsAt: "2026-10-15T18:00:00.000Z",
-        rows: [row({ email }), row({ email })],
-      })
+      importAttendanceCsv(
+        {
+          title: "CSV Import Duplicate Test",
+          startsAt: "2026-10-15T18:00:00.000Z",
+          rows: [row({ email }), row({ email })],
+        },
+        judoClubId
+      )
     ).rejects.toMatchObject({ message: expect.stringMatching(/duplicate/i) });
 
     // Clean up whatever partial state the duplicate-row failure left behind
@@ -283,7 +329,7 @@ test.describe("syncAttendanceCsv", () => {
   test("adds new people to an existing session's roster, source csv_import, attended false", async () => {
     const sessionId = await newSession();
     const rows = [row(), row()];
-    const result = await syncAttendanceCsv({ sessionId, rows });
+    const result = await syncAttendanceCsv({ sessionId, rows }, judoClubId);
     expect(result).toEqual({ added: 2, skipped: 0, removed: 0 });
 
     const { data: records } = await admin
@@ -319,10 +365,13 @@ test.describe("syncAttendanceCsv", () => {
     });
     if (recordError) throw recordError;
 
-    const result = await syncAttendanceCsv({
-      sessionId,
-      rows: [row({ email }), row()],
-    });
+    const result = await syncAttendanceCsv(
+      {
+        sessionId,
+        rows: [row({ email }), row()],
+      },
+      judoClubId
+    );
     expect(result).toEqual({ added: 1, skipped: 1, removed: 0 });
 
     // The pre-existing record must be untouched -- still manual_tick/attended:true,
@@ -356,7 +405,7 @@ test.describe("syncAttendanceCsv", () => {
     if (error) throw error;
     personIds.push(existing.id);
 
-    await syncAttendanceCsv({ sessionId, rows: [row({ email })] });
+    await syncAttendanceCsv({ sessionId, rows: [row({ email })] }, judoClubId);
 
     const { count: personCount } = await admin
       .from("person")
@@ -371,10 +420,13 @@ test.describe("syncAttendanceCsv", () => {
     const leavingEmail = `csv-sync-leaving-${crypto.randomUUID()}@example.test`;
 
     // First upload: both sign up.
-    const first = await syncAttendanceCsv({
-      sessionId,
-      rows: [row({ email: stayingEmail }), row({ email: leavingEmail })],
-    });
+    const first = await syncAttendanceCsv(
+      {
+        sessionId,
+        rows: [row({ email: stayingEmail }), row({ email: leavingEmail })],
+      },
+      judoClubId
+    );
     expect(first).toEqual({ added: 2, skipped: 0, removed: 0 });
 
     const { data: staying } = await admin
@@ -390,10 +442,13 @@ test.describe("syncAttendanceCsv", () => {
     personIds.push(staying!.id, leaving!.id);
 
     // Second upload: only the staying person is still signed up.
-    const second = await syncAttendanceCsv({
-      sessionId,
-      rows: [row({ email: stayingEmail })],
-    });
+    const second = await syncAttendanceCsv(
+      {
+        sessionId,
+        rows: [row({ email: stayingEmail })],
+      },
+      judoClubId
+    );
     expect(second).toEqual({ added: 0, skipped: 1, removed: 1 });
 
     const { data: remaining } = await admin
@@ -439,7 +494,7 @@ test.describe("syncAttendanceCsv", () => {
     });
 
     // Upload a CSV that mentions neither of them.
-    const result = await syncAttendanceCsv({ sessionId, rows: [row()] });
+    const result = await syncAttendanceCsv({ sessionId, rows: [row()] }, judoClubId);
     expect(result.removed).toBe(0);
     personIds.push(
       ...(
@@ -474,7 +529,7 @@ test.describe("syncAttendanceCsv", () => {
       attended: true,
     });
 
-    const result = await syncAttendanceCsv({ sessionId, rows: [row()] });
+    const result = await syncAttendanceCsv({ sessionId, rows: [row()] }, judoClubId);
     expect(result.removed).toBe(0);
     personIds.push(
       ...(
