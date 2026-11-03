@@ -75,8 +75,16 @@ function fakeAdapter(overrides?: {
 
 test.describe("sendChaseEmail", () => {
   let personId = "";
+  let tkdPersonId = "";
 
   test.afterEach(async () => {
+    if (tkdPersonId) {
+      const { error: tkdChaseError } = await admin.from("chase_email").delete().eq("person_id", tkdPersonId);
+      if (tkdChaseError) throw tkdChaseError;
+      const { error: tkdPersonError } = await admin.from("person").delete().eq("id", tkdPersonId);
+      if (tkdPersonError) throw tkdPersonError;
+      tkdPersonId = "";
+    }
     if (!personId) return;
     const { error: chaseError } = await admin.from("chase_email").delete().eq("person_id", personId);
     if (chaseError) throw chaseError;
@@ -365,6 +373,7 @@ test.describe("sendChaseEmail", () => {
       .select("id")
       .single();
     if (personError) throw personError;
+    tkdPersonId = tkdPerson!.id;
 
     const { data: tkdChase, error: chaseError } = await admin
       .from("chase_email")
@@ -382,8 +391,5 @@ test.describe("sendChaseEmail", () => {
     if (chaseError) throw chaseError;
 
     await expect(sendChaseEmail(tkdChase!.id, judoClubId, fakeAdapter())).rejects.toThrow();
-
-    await admin.from("chase_email").delete().eq("id", tkdChase!.id);
-    await admin.from("person").delete().eq("id", tkdPerson!.id);
   });
 });
