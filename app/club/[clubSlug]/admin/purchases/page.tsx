@@ -32,9 +32,10 @@ export default async function AdminPurchasesPage({
       .select(
         'id, raw_person_name, raw_cid, raw_email, source, purchased_at, match_status, product:product_id(name), person:person_id(full_name)'
       )
+      .eq('club_id', clubId) // ADD this filter -- see Task 13 for this page's full scoping pass
       .order('purchased_at', { ascending: false })
       .limit(20),
-    listProducts(),
+    listProducts(clubId),
     listRecentUploads(clubId, 5),
   ]);
 

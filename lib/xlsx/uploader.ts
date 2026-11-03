@@ -7,7 +7,7 @@
 
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth/require-admin";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 import { parseXlsxFile } from "./parser";
 import { ingestPurchases } from "@/lib/purchase/interface";
 import { RawPurchaseRow } from "@/lib/purchase/types";
@@ -32,8 +32,8 @@ export async function uploadXlsx(clubSlug: string, formData: FormData): Promise<
   // real row in `product` (a stale/forged id would otherwise surface as a
   // foreign-key error deep inside ingestPurchases instead of a clear
   // message here).
-  const admin = createAdminClient();
-  const { data: product, error: productError } = await admin
+  const scoped = createClubScopedClient(adminUser.clubId);
+  const { data: product, error: productError } = await scoped
     .from("product")
     .select("id")
     .eq("id", parsedProductId.data)
@@ -42,6 +42,10 @@ export async function uploadXlsx(clubSlug: string, formData: FormData): Promise<
   if (!product) {
     return { success: false, message: "Selected product no longer exists — refresh and try again." };
   }
+  // createClubScopedClient's select() loses type inference under tsc --
+  // same workaround as lib/attendance/sync.ts, lib/purchase/queries.ts,
+  // and lib/purchase/interface.ts.
+  const typedProduct = product as unknown as { id: string };
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) {
@@ -57,7 +61,7 @@ export async function uploadXlsx(clubSlug: string, formData: FormData): Promise<
   let rows: RawPurchaseRow[];
   let skipped: number;
   try {
-    ({ rows, skipped } = parseXlsxFile(Buffer.from(buffer), product.id));
+    ({ rows, skipped } = parseXlsxFile(Buffer.from(buffer), typedProduct.id));
   } catch (error) {
     console.warn("Failed to parse XLSX file:", error);
     return {
@@ -80,11 +84,10 @@ export async function uploadXlsx(clubSlug: string, formData: FormData): Promise<
   // corrected (changeUploadProduct, if the wrong pass was picked above)
   // or undone (undoUpload, if the whole file was wrong) from the
   // "recent uploads" list rather than hand-picking individual rows.
-  const { data: upload, error: uploadError } = await admin
+  const { data: upload, error: uploadError } = await scoped
     .from("purchase_upload")
     .insert({
-      club_id: adminUser.clubId,
-      product_id: product.id,
+      product_id: typedProduct.id,
       filename: file.name,
       row_count: rows.length,
       uploaded_by: adminUser.email,
