@@ -139,3 +139,20 @@ test.describe("toggle_attendance (AC-2)", () => {
     expect(data![0].source).toBe("manual_tick");
   });
 });
+
+test.describe("toggle_attendance cross-club safety (app-layer check)", () => {
+  test("assertSessionBelongsToClub rejects a session from a different club", async () => {
+    const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+    const { data: tkdSession, error } = await admin
+      .from("session")
+      .insert({ club_id: taekwondo!.id, title: "Cross-Club IDOR Test Session", starts_at: new Date().toISOString() })
+      .select("id")
+      .single();
+    if (error) throw error;
+
+    const { assertSessionBelongsToClub, SessionNotFoundError } = await import("@/lib/attendance/queries");
+    await expect(assertSessionBelongsToClub(tkdSession!.id, judoClubId)).rejects.toThrow(SessionNotFoundError);
+
+    await admin.from("session").delete().eq("id", tkdSession!.id);
+  });
+});

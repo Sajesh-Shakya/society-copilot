@@ -7,10 +7,10 @@
 
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getDefaultClubId } from "@/lib/supabase/default-club";
+import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 import { EactivitiesProvider } from "@/lib/eactivities/provider";
 import { syncSessionAttendance } from "@/lib/attendance/sync";
-import { getSessionWithAttendance } from "@/lib/attendance/queries";
+import { getSessionWithAttendance, assertSessionBelongsToClub } from "@/lib/attendance/queries";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
 import { reapplyWaiversForPerson } from "@/lib/purchase/interface";
@@ -52,19 +52,17 @@ export async function createSessionFromSignup(
   clubSlug: string,
   input: z.infer<typeof createSessionSchema>
 ): Promise<{ sessionId: string }> {
-  await requireAdmin(clubSlug);
+  const { clubId } = await requireAdmin(clubSlug);
   const gate = process.env.EACTIVITIES_CLUB_SLUG;
   if (gate && clubSlug !== gate) {
     throw new Error("eActivities isn't available for this club yet — use CSV import instead.");
   }
   const parsed = createSessionSchema.parse(input);
-  const admin = createAdminClient();
-  const clubId = await getDefaultClubId(admin);
+  const scoped = createClubScopedClient(clubId);
 
-  const { data: session, error } = await admin
+  const { data: session, error } = await scoped
     .from("session")
     .insert({
-      club_id: clubId,
       eactivities_event_id: parsed.eventId,
       eactivities_signup_id: parsed.signupId,
       title: parsed.title,
@@ -78,7 +76,7 @@ export async function createSessionFromSignup(
   // load — AC-1. If this fails (e.g. eActivities down), session creation
   // still succeeds; the screen falls back to the manual "Sync now" button.
   try {
-    await syncSessionAttendance(session.id);
+    await syncSessionAttendance(session.id, clubId);
   } catch {
     // swallow — non-fatal, see comment above
   }
@@ -97,9 +95,10 @@ const toggleSchema = z.object({
 });
 
 export async function toggleAttendance(clubSlug: string, input: z.infer<typeof toggleSchema>) {
-  await requireAdmin(clubSlug);
+  const { clubId } = await requireAdmin(clubSlug);
   const { sessionId, personId, attended } = toggleSchema.parse(input);
-  const admin = createAdminClient();
+  await assertSessionBelongsToClub(sessionId, clubId);
+  const scoped = createClubScopedClient(clubId);
 
   // Unlike the sync's ON CONFLICT DO NOTHING (never overwrite an existing
   // tick), this IS the admin's explicit action — a DO UPDATE is correct
@@ -121,7 +120,7 @@ export async function toggleAttendance(clubSlug: string, input: z.infer<typeof t
   // statement -- source is only ever set by the INSERT's literal value,
   // never touched by the DO UPDATE, with no window for a second caller to
   // interleave.
-  const { error } = await admin.rpc("toggle_attendance", {
+  const { error } = await scoped.rpc("toggle_attendance", {
     target_person_id: personId,
     target_session_id: sessionId,
     target_attended: attended,
@@ -154,11 +153,11 @@ export async function setSessionCancelled(
   clubSlug: string,
   input: z.infer<typeof setSessionCancelledSchema>
 ) {
-  await requireAdmin(clubSlug);
+  const { clubId } = await requireAdmin(clubSlug);
   const { sessionId, cancelled } = setSessionCancelledSchema.parse(input);
-  const admin = createAdminClient();
+  const scoped = createClubScopedClient(clubId);
 
-  const { error } = await admin
+  const { error } = await scoped
     .from("session")
     .update({ cancelled_at: cancelled ? new Date().toISOString() : null })
     .eq("id", sessionId);
@@ -209,17 +208,11 @@ export async function searchPeople(clubSlug: string, query: string): Promise<Per
 }
 
 export async function addExistingPersonToSession(clubSlug: string, sessionId: string, personId: string) {
-  await requireAdmin(clubSlug);
-  const admin = createAdminClient();
-  const clubId = await getDefaultClubId(admin);
-  const { error } = await admin.from("attendance_record").upsert(
-    {
-      club_id: clubId,
-      person_id: personId,
-      session_id: sessionId,
-      attended: true,
-      source: "manual_tick",
-    },
+  const { clubId } = await requireAdmin(clubSlug);
+  await assertSessionBelongsToClub(sessionId, clubId);
+  const scoped = createClubScopedClient(clubId);
+  const { error } = await scoped.from("attendance_record").upsert(
+    { person_id: personId, session_id: sessionId, attended: true, source: "manual_tick" },
     { onConflict: "person_id,session_id" }
   );
   if (error) throw error;
@@ -246,11 +239,11 @@ export async function createWalkIn(
   clubSlug: string,
   input: z.infer<typeof walkInSchema>
 ): Promise<{ personId: string; reusedExisting: boolean }> {
-  await requireAdmin(clubSlug);
+  const { clubId } = await requireAdmin(clubSlug);
   const { sessionId, email, fullName, cid: rawCid } = walkInSchema.parse(input);
+  await assertSessionBelongsToClub(sessionId, clubId);
   const cid = rawCid ? normalizeCid(rawCid) : null;
-  const admin = createAdminClient();
-  const clubId = await getDefaultClubId(admin);
+  const scoped = createClubScopedClient(clubId);
 
   // CID first, if given -- mirrors lib/attendance/sync.ts's identity
   // priority (CID is the one identifier this codebase actually trusts).
@@ -262,53 +255,45 @@ export async function createWalkIn(
   // unique constraint, so without this check every such case would
   // silently create a duplicate person row instead of reusing the real
   // one.
+  // createClubScopedClient's select() wrapper types `columns` as a plain
+  // `string` rather than a literal, so supabase-js can't statically parse
+  // the query -- same cast-after-fetch convention as lib/attendance/sync.ts
+  // and lib/attendance/queries.ts.
   let existing: { id: string; cid: string | null } | null = null;
   if (cid) {
-    const { data, error } = await admin.from("person").select("id, cid").eq("cid", cid).maybeSingle();
+    const { data, error } = await scoped.from("person").select("id, cid").eq("cid", cid).maybeSingle();
     if (error) throw error;
-    existing = data;
+    existing = data as unknown as { id: string; cid: string | null } | null;
   }
   if (!existing) {
-    const { data, error } = await admin
+    const { data, error } = await scoped
       .from("person")
       .select("id, cid")
       .ilike("email", escapeIlikePattern(email))
       .maybeSingle();
     if (error) throw error;
-    existing = data;
+    existing = data as unknown as { id: string; cid: string | null } | null;
   }
 
   let personId: string;
   if (existing) {
     personId = existing.id;
     if (cid && !existing.cid) {
-      const { error: backfillError } = await admin.from("person").update({ cid }).eq("id", existing.id);
+      const { error: backfillError } = await scoped.from("person").update({ cid }).eq("id", existing.id);
       if (backfillError) throw backfillError;
     }
   } else {
-    const { data: person, error: personError } = await admin
+    const { data: person, error: personError } = await scoped
       .from("person")
-      .insert({
-        club_id: clubId,
-        email,
-        full_name: fullName,
-        cid,
-        identity_confidence: "provisional",
-      })
+      .insert({ email, full_name: fullName, cid, identity_confidence: "provisional" })
       .select("id")
       .single();
     if (personError) throw personError;
     personId = person.id;
   }
 
-  const { error: attendanceError } = await admin.from("attendance_record").upsert(
-    {
-      club_id: clubId,
-      person_id: personId,
-      session_id: sessionId,
-      attended: true,
-      source: existing ? "manual_tick" : "walk_in",
-    },
+  const { error: attendanceError } = await scoped.from("attendance_record").upsert(
+    { person_id: personId, session_id: sessionId, attended: true, source: existing ? "manual_tick" : "walk_in" },
     { onConflict: "person_id,session_id" }
   );
   if (attendanceError) throw attendanceError;
@@ -326,8 +311,9 @@ export async function createWalkIn(
 // ---------------------------------------------------------------------------
 
 export async function triggerManualSync(clubSlug: string, sessionId: string) {
-  await requireAdmin(clubSlug);
-  return syncSessionAttendance(sessionId);
+  const { clubId } = await requireAdmin(clubSlug);
+  await assertSessionBelongsToClub(sessionId, clubId);
+  return syncSessionAttendance(sessionId, clubId);
 }
 
 // Client-callable wrapper around getSessionWithAttendance — used to refetch
@@ -335,7 +321,7 @@ export async function triggerManualSync(clubSlug: string, sessionId: string) {
 // attendance_record's own columns (person_id), not the joined person name/
 // email needed to render a new row. See attendance-screen.tsx.
 export async function getAttendanceList(clubSlug: string, sessionId: string) {
-  await requireAdmin(clubSlug);
-  const session = await getSessionWithAttendance(sessionId);
+  const { clubId } = await requireAdmin(clubSlug);
+  const session = await getSessionWithAttendance(sessionId, clubId);
   return session?.attendance ?? [];
 }
