@@ -236,6 +236,7 @@ test.describe("importAttendanceCsv", () => {
       .select("id")
       .single();
     if (error) throw error;
+    personIds.push(tkdPerson!.id);
 
     const result = await importAttendanceCsv(
       { title: "CSV Cross-Club Test", startsAt: "2026-10-15T18:00:00.000Z", rows: [row({ email: sharedEmail })] },
@@ -251,8 +252,6 @@ test.describe("importAttendanceCsv", () => {
     const person = Array.isArray(record!.person) ? record!.person[0] : record!.person;
     expect(person.club_id).toBe(judoClubId); // a NEW Judo person, not the Taekwondo one
     personIds.push(record!.person_id);
-
-    await admin.from("person").delete().eq("id", tkdPerson!.id);
   });
 
   test("a duplicate email within the same file (bypassing the parser's guard) still throws a comprehensible DB error", async () => {
