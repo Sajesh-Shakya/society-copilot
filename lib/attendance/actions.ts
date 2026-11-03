@@ -155,6 +155,7 @@ export async function setSessionCancelled(
 ) {
   const { clubId } = await requireAdmin(clubSlug);
   const { sessionId, cancelled } = setSessionCancelledSchema.parse(input);
+  await assertSessionBelongsToClub(sessionId, clubId);
   const scoped = createClubScopedClient(clubId);
 
   const { error } = await scoped
@@ -210,9 +211,21 @@ export async function searchPeople(clubSlug: string, query: string): Promise<Per
 export async function addExistingPersonToSession(clubSlug: string, sessionId: string, personId: string) {
   const { clubId } = await requireAdmin(clubSlug);
   await assertSessionBelongsToClub(sessionId, clubId);
-  const scoped = createClubScopedClient(clubId);
-  const { error } = await scoped.from("attendance_record").upsert(
-    { person_id: personId, session_id: sessionId, attended: true, source: "manual_tick" },
+  // attendance_record's real unique constraint is (person_id, session_id)
+  // only -- no club_id in it, and it never needs one: person_id and
+  // session_id both already belong to a single club transitively (Plan
+  // 2b-1's composite same-club FKs), so this conflict target can never
+  // cross a club boundary. createClubScopedClient's upsert() wrapper
+  // throws unless onConflict includes "club_id" or ignoreDuplicates is
+  // set (see lib/supabase/club-scoped.ts) -- neither fits here, since this
+  // DO-UPDATE semantics (flip attended to true even if the row already
+  // exists) is exactly what's wanted. Going through the raw admin client
+  // with an explicit club_id is safe: sessionId was just verified via
+  // assertSessionBelongsToClub above, and personId comes from searchPeople
+  // (already club_id-scoped via the RPC's target_club_id param).
+  const admin = createAdminClient();
+  const { error } = await admin.from("attendance_record").upsert(
+    { club_id: clubId, person_id: personId, session_id: sessionId, attended: true, source: "manual_tick" },
     { onConflict: "person_id,session_id" }
   );
   if (error) throw error;
@@ -292,8 +305,17 @@ export async function createWalkIn(
     personId = person.id;
   }
 
-  const { error: attendanceError } = await scoped.from("attendance_record").upsert(
-    { person_id: personId, session_id: sessionId, attended: true, source: existing ? "manual_tick" : "walk_in" },
+  // See the comment in addExistingPersonToSession above -- same reasoning:
+  // attendance_record's unique(person_id, session_id) constraint has no
+  // club_id in it and never crosses a club boundary, so the scoped
+  // upsert() wrapper's onConflict/ignoreDuplicates requirement doesn't
+  // apply and would force the wrong (DO-NOTHING) semantics here. sessionId
+  // was verified via assertSessionBelongsToClub above; personId is either
+  // freshly inserted via the scoped client (so already this club) or an
+  // `existing` row found via a scoped lookup.
+  const admin = createAdminClient();
+  const { error: attendanceError } = await admin.from("attendance_record").upsert(
+    { club_id: clubId, person_id: personId, session_id: sessionId, attended: true, source: existing ? "manual_tick" : "walk_in" },
     { onConflict: "person_id,session_id" }
   );
   if (attendanceError) throw attendanceError;
@@ -322,6 +344,7 @@ export async function triggerManualSync(clubSlug: string, sessionId: string) {
 // email needed to render a new row. See attendance-screen.tsx.
 export async function getAttendanceList(clubSlug: string, sessionId: string) {
   const { clubId } = await requireAdmin(clubSlug);
+  await assertSessionBelongsToClub(sessionId, clubId);
   const session = await getSessionWithAttendance(sessionId, clubId);
   return session?.attendance ?? [];
 }

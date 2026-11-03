@@ -141,6 +141,15 @@ test.describe("toggle_attendance (AC-2)", () => {
 });
 
 test.describe("toggle_attendance cross-club safety (app-layer check)", () => {
+  let tkdSessionId = "";
+
+  test.afterEach(async () => {
+    if (tkdSessionId) {
+      await admin.from("session").delete().eq("id", tkdSessionId);
+      tkdSessionId = "";
+    }
+  });
+
   test("assertSessionBelongsToClub rejects a session from a different club", async () => {
     const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
     const { data: tkdSession, error } = await admin
@@ -149,10 +158,9 @@ test.describe("toggle_attendance cross-club safety (app-layer check)", () => {
       .select("id")
       .single();
     if (error) throw error;
+    tkdSessionId = tkdSession!.id;
 
     const { assertSessionBelongsToClub, SessionNotFoundError } = await import("@/lib/attendance/queries");
-    await expect(assertSessionBelongsToClub(tkdSession!.id, judoClubId)).rejects.toThrow(SessionNotFoundError);
-
-    await admin.from("session").delete().eq("id", tkdSession!.id);
+    await expect(assertSessionBelongsToClub(tkdSessionId, judoClubId)).rejects.toThrow(SessionNotFoundError);
   });
 });
