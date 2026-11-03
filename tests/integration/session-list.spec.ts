@@ -190,10 +190,9 @@ test.describe("listRecentSessions", () => {
       .select("id")
       .single();
     if (error) throw error;
+    sessionIds.push(tkdSession!.id);
 
     const results = await listRecentSessions(judoClubId);
     expect(results.some((r) => r.id === tkdSession!.id)).toBe(false);
-
-    await admin.from("session").delete().eq("id", tkdSession!.id);
   });
 });
