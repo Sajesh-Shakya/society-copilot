@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { requireAdmin, UnauthorizedError } from '@/lib/auth/require-admin';
 import { redirect } from 'next/navigation';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createClubScopedClient } from '@/lib/supabase/club-scoped';
 import { XlsxUploader } from '@/components/purchase/xlsx-uploader';
 import { PurchasesTable, type PurchaseRow } from '@/components/purchase/purchases-table';
 import { RecentUploads } from '@/components/purchase/recent-uploads';
@@ -25,21 +25,32 @@ export default async function AdminPurchasesPage({
     throw error;
   }
 
-  const admin = createAdminClient();
+  const scoped = createClubScopedClient(clubId);
   const [{ data: rawPurchases }, products, recentUploads] = await Promise.all([
-    admin
+    scoped
       .from('purchase')
       .select(
         'id, raw_person_name, raw_cid, raw_email, source, purchased_at, match_status, product:product_id(name), person:person_id(full_name)'
       )
-      .eq('club_id', clubId) // ADD this filter -- see Task 13 for this page's full scoping pass
       .order('purchased_at', { ascending: false })
       .limit(20),
     listProducts(clubId),
     listRecentUploads(clubId, 5),
   ]);
 
-  const purchases: PurchaseRow[] = (rawPurchases ?? []).map((p) => {
+  const purchaseRows = (rawPurchases ?? []) as unknown as {
+    id: string;
+    raw_person_name: string;
+    raw_cid: string | null;
+    raw_email: string | null;
+    source: string;
+    purchased_at: string;
+    match_status: string;
+    product: { name: string } | { name: string }[] | null;
+    person: { full_name: string } | { full_name: string }[] | null;
+  }[];
+
+  const purchases: PurchaseRow[] = purchaseRows.map((p) => {
     // supabase-js types a to-one FK select as an array; each is always
     // exactly one row (or none, for an unmatched purchase's null
     // person_id) since both are not-null FKs when present.
