@@ -461,7 +461,7 @@ test.describe("reapplyWaiversForPerson", () => {
     await admin.from("attendance_record").update({ attended: true }).eq("session_id", debtSessionId);
     expect(await getOutstandingDebt(personId)).toBe(1);
 
-    const result = await reapplyWaiversForEveryoneWithDebt();
+    const result = await reapplyWaiversForEveryoneWithDebt(judoClubId);
 
     // Tolerant: this sweep is global and may also process other real
     // debtors in the live project -- only this test's own person is

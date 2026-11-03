@@ -154,7 +154,7 @@ test.describe("purchase upload batches", () => {
     await new Promise((r) => setTimeout(r, 10)); // ensure distinct created_at ordering
     const uploadB = await createUpload(productB);
 
-    const uploads = await listRecentUploads(5);
+    const uploads = await listRecentUploads(judoClubId, 5);
     const ids = uploads.map((u) => u.id);
     expect(ids.indexOf(uploadB)).toBeLessThan(ids.indexOf(uploadA));
 
@@ -182,7 +182,7 @@ test.describe("purchase upload batches", () => {
 
     // ...corrected to the 3-session pass it should have been.
     const rightProduct = await createProduct(3);
-    const result = await changeUploadProduct(uploadId, rightProduct);
+    const result = await changeUploadProduct(judoClubId, uploadId, rightProduct);
 
     expect(result.purchasesUpdated).toBe(1);
     expect(result.rewaived).toBe(3);
@@ -209,7 +209,7 @@ test.describe("purchase upload batches", () => {
     await applyWaivers(personId, purchaseId);
     expect(await getOutstandingDebt(personId)).toBe(0);
 
-    const result = await undoUpload(uploadId);
+    const result = await undoUpload(judoClubId, uploadId);
     expect(result.deletedPurchases).toBe(1);
     purchaseIds = purchaseIds.filter((id) => id !== purchaseId); // already deleted
     uploadIds = uploadIds.filter((id) => id !== uploadId); // already deleted
@@ -225,6 +225,23 @@ test.describe("purchase upload batches", () => {
       .eq("id", uploadId)
       .maybeSingle();
     expect(deletedUpload).toBeNull();
+  });
+
+  test("changeUploadProduct refuses a newProductId that belongs to a different club", async () => {
+    personId = await createPerson();
+    const product = await createProduct(1);
+    const uploadId = await createUpload(product);
+
+    const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+    const { data: tkdProduct, error } = await admin
+      .from("product")
+      .insert({ club_id: taekwondo!.id, name: `Cross-Club Product ${crypto.randomUUID()}`, kind: "other" })
+      .select("id")
+      .single();
+    if (error) throw error;
+    productIds.push(tkdProduct!.id);
+
+    await expect(changeUploadProduct(judoClubId, uploadId, tkdProduct!.id)).rejects.toThrow();
   });
 
   test("a purchase_upload row has club_id stamped matching its product's club", async () => {

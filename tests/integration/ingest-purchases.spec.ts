@@ -467,7 +467,7 @@ test.describe("rematchUnmatchedPurchases", () => {
     const before = await admin.from("purchase").select("match_status, person_id").eq("id", purchaseId).single();
     expect(before.data!.match_status).toBe("unmatched");
 
-    const result = await rematchUnmatchedPurchases();
+    const result = await rematchUnmatchedPurchases(judoClubId);
 
     expect(result.matched).toBeGreaterThanOrEqual(1);
 
@@ -511,7 +511,7 @@ test.describe("rematchUnmatchedPurchases", () => {
     if (purchaseError || !purchase) throw new Error(`Failed to create test purchase: ${purchaseError?.message}`);
     purchaseId = purchase.id;
 
-    const result = await rematchUnmatchedPurchases();
+    const result = await rematchUnmatchedPurchases(judoClubId);
 
     expect(result.stillUnmatched).toBeGreaterThanOrEqual(1);
 

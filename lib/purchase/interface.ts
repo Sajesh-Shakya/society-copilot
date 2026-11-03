@@ -1,5 +1,4 @@
 import { createAdminClient } from '@/lib/supabase/admin';
-import { getDefaultClubId } from '@/lib/supabase/default-club';
 import { createClubScopedClient } from '@/lib/supabase/club-scoped';
 import { RawPurchaseRow, PurchaseRecord, IngestionResult, IngestionError, isStudentMemberType } from './types';
 import { matchOrQueue, matchPersonRecord } from './matcher';
@@ -348,9 +347,8 @@ export interface ReapplySweepResult {
  * reapplyWaiversForPerson's RPC once per person would mean one round
  * trip per debtor.
  */
-export async function reapplyWaiversForEveryoneWithDebt(): Promise<ReapplySweepResult> {
+export async function reapplyWaiversForEveryoneWithDebt(clubId: string): Promise<ReapplySweepResult> {
   const admin = createAdminClient();
-  const clubId = await getDefaultClubId(admin);
   const { data, error } = await admin.rpc('reapply_waivers_for_everyone_with_debt', { target_club_id: clubId });
   if (error) {
     throw new Error(`Failed to run the waiver re-check sweep: ${error.message}`);
@@ -377,19 +375,30 @@ export interface RematchResult {
  * on the purchases page rather than a one-off script every time it
  * recurs.
  */
-export async function rematchUnmatchedPurchases(): Promise<RematchResult> {
-  const admin = createAdminClient();
+export async function rematchUnmatchedPurchases(clubId: string): Promise<RematchResult> {
+  const scoped = createClubScopedClient(clubId);
 
-  const { data: unmatched, error } = await admin
+  const { data: unmatched, error } = await scoped
     .from('purchase')
     .select('id, raw_person_name, raw_cid, raw_email, raw_member_type, purchased_at')
     .eq('match_status', 'unmatched');
   if (error) throw error;
+  // createClubScopedClient's select() loses type inference under tsc --
+  // same workaround as lib/attendance/sync.ts, queries.ts, and this file's
+  // own ingestPurchases/product lookups.
+  const typedUnmatched = unmatched as unknown as {
+    id: string;
+    raw_person_name: string;
+    raw_cid: string | null;
+    raw_email: string | null;
+    raw_member_type: string | null;
+    purchased_at: string;
+  }[];
 
   let matched = 0;
   let stillUnmatched = 0;
 
-  for (const p of unmatched ?? []) {
+  for (const p of typedUnmatched ?? []) {
     const row: RawPurchaseRow = {
       externalId: p.id,
       personName: p.raw_person_name,
@@ -401,13 +410,13 @@ export async function rematchUnmatchedPurchases(): Promise<RematchResult> {
       source: 'xlsx_upload',
     };
 
-    const result = await matchPersonRecord(row);
+    const result = await matchPersonRecord(row, clubId);
     if (result.matchStatus === 'unmatched') {
       stillUnmatched++;
       continue;
     }
 
-    const { error: updateError } = await admin
+    const { error: updateError } = await scoped
       .from('purchase')
       .update({ person_id: result.personId, match_status: result.matchStatus })
       .eq('id', p.id);
@@ -435,16 +444,28 @@ export interface UploadBatch {
  * list that lets an admin correct or undo an accidental wrong-product
  * upload. See changeUploadProduct/undoUpload below.
  */
-export async function listRecentUploads(limit = 5): Promise<UploadBatch[]> {
-  const admin = createAdminClient();
-  const { data, error } = await admin
+export async function listRecentUploads(clubId: string, limit = 5): Promise<UploadBatch[]> {
+  const scoped = createClubScopedClient(clubId);
+  const { data, error } = await scoped
     .from('purchase_upload')
     .select('id, product_id, filename, row_count, uploaded_by, created_at, product:product_id(name)')
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;
+  // createClubScopedClient's select() loses type inference under tsc --
+  // same workaround as lib/attendance/sync.ts, queries.ts, and this file's
+  // own ingestPurchases/product lookups.
+  const typedData = data as unknown as {
+    id: string;
+    product_id: string;
+    filename: string | null;
+    row_count: number;
+    uploaded_by: string | null;
+    created_at: string;
+    product: { name: string } | { name: string }[] | null;
+  }[];
 
-  return (data ?? []).map((u) => {
+  return (typedData ?? []).map((u) => {
     // supabase-js types a to-one FK select as an array; always exactly
     // one row since product_id is not-null with a FK.
     const product = Array.isArray(u.product) ? u.product[0] : u.product;
@@ -471,35 +492,51 @@ export async function listRecentUploads(limit = 5): Promise<UploadBatch[]> {
  * still marked waived by the same purchase under the stale rule).
  */
 export async function changeUploadProduct(
+  clubId: string,
   uploadId: string,
   newProductId: string
 ): Promise<{ purchasesUpdated: number; rewaived: number }> {
-  const admin = createAdminClient();
+  const scoped = createClubScopedClient(clubId);
 
-  const { data: purchases, error } = await admin
+  // The new product must belong to this club too -- scoped select returns
+  // null for a cross-club id, same mechanism as every other guard in this
+  // sweep.
+  const { data: product, error: productError } = await scoped
+    .from('product')
+    .select('id')
+    .eq('id', newProductId)
+    .maybeSingle();
+  if (productError) throw productError;
+  if (!product) throw new Error(`Product ${newProductId} does not belong to this club.`);
+
+  const { data: rawPurchases, error } = await scoped
     .from('purchase')
     .select('id, person_id')
     .eq('upload_id', uploadId);
   if (error) throw error;
+  // createClubScopedClient's select() loses type inference under tsc --
+  // same workaround as lib/attendance/sync.ts, queries.ts, and this file's
+  // own ingestPurchases/product lookups.
+  const purchases = rawPurchases as unknown as { id: string; person_id: string | null }[] | null;
   if (!purchases || purchases.length === 0) {
     return { purchasesUpdated: 0, rewaived: 0 };
   }
 
   const purchaseIds = purchases.map((p) => p.id);
 
-  const { error: unwaiveError } = await admin
+  const { error: unwaiveError } = await scoped
     .from('attendance_record')
     .update({ waived_by_purchase_id: null })
     .in('waived_by_purchase_id', purchaseIds);
   if (unwaiveError) throw unwaiveError;
 
-  const { error: updatePurchasesError } = await admin
+  const { error: updatePurchasesError } = await scoped
     .from('purchase')
     .update({ product_id: newProductId })
     .eq('upload_id', uploadId);
   if (updatePurchasesError) throw updatePurchasesError;
 
-  const { error: updateUploadError } = await admin
+  const { error: updateUploadError } = await scoped
     .from('purchase_upload')
     .update({ product_id: newProductId })
     .eq('id', uploadId);
@@ -520,25 +557,29 @@ export async function changeUploadProduct(
  * completely the wrong file" rather than "right file, wrong product" (use
  * changeUploadProduct for that instead, which is non-destructive).
  */
-export async function undoUpload(uploadId: string): Promise<{ deletedPurchases: number }> {
-  const admin = createAdminClient();
+export async function undoUpload(clubId: string, uploadId: string): Promise<{ deletedPurchases: number }> {
+  const scoped = createClubScopedClient(clubId);
 
-  const { data: purchases, error } = await admin.from('purchase').select('id').eq('upload_id', uploadId);
+  const { data: purchases, error } = await scoped.from('purchase').select('id').eq('upload_id', uploadId);
   if (error) throw error;
-  const purchaseIds = (purchases ?? []).map((p) => p.id);
+  // createClubScopedClient's select() loses type inference under tsc --
+  // same workaround as lib/attendance/sync.ts, queries.ts, and this file's
+  // own ingestPurchases/product lookups.
+  const typedPurchases = purchases as unknown as { id: string }[] | null;
+  const purchaseIds = (typedPurchases ?? []).map((p) => p.id);
 
   if (purchaseIds.length > 0) {
-    const { error: unwaiveError } = await admin
+    const { error: unwaiveError } = await scoped
       .from('attendance_record')
       .update({ waived_by_purchase_id: null })
       .in('waived_by_purchase_id', purchaseIds);
     if (unwaiveError) throw unwaiveError;
 
-    const { error: deleteError } = await admin.from('purchase').delete().in('id', purchaseIds);
+    const { error: deleteError } = await scoped.from('purchase').delete().in('id', purchaseIds);
     if (deleteError) throw deleteError;
   }
 
-  const { error: deleteUploadError } = await admin.from('purchase_upload').delete().eq('id', uploadId);
+  const { error: deleteUploadError } = await scoped.from('purchase_upload').delete().eq('id', uploadId);
   if (deleteUploadError) throw deleteUploadError;
 
   return { deletedPurchases: purchaseIds.length };

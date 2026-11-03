@@ -9,21 +9,21 @@ import {
 } from "./interface";
 
 export async function rematchUnmatchedPurchases(clubSlug: string) {
-  await requireAdmin(clubSlug);
-  return rematchUnmatchedPurchasesImpl();
+  const { clubId } = await requireAdmin(clubSlug);
+  return rematchUnmatchedPurchasesImpl(clubId);
 }
 
 const idSchema = z.string().uuid();
 
 export async function changeUploadProduct(clubSlug: string, uploadId: string, newProductId: string) {
-  await requireAdmin(clubSlug);
+  const { clubId } = await requireAdmin(clubSlug);
   const parsedUploadId = idSchema.parse(uploadId);
   const parsedProductId = idSchema.parse(newProductId);
-  return changeUploadProductImpl(parsedUploadId, parsedProductId);
+  return changeUploadProductImpl(clubId, parsedUploadId, parsedProductId);
 }
 
 export async function undoUpload(clubSlug: string, uploadId: string) {
-  await requireAdmin(clubSlug);
+  const { clubId } = await requireAdmin(clubSlug);
   const parsedUploadId = idSchema.parse(uploadId);
-  return undoUploadImpl(parsedUploadId);
+  return undoUploadImpl(clubId, parsedUploadId);
 }

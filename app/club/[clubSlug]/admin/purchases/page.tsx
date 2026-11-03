@@ -17,8 +17,9 @@ export default async function AdminPurchasesPage({
   params: Promise<{ clubSlug: string }>;
 }) {
   const { clubSlug } = await params;
+  let clubId: string;
   try {
-    await requireAdmin(clubSlug);
+    ({ clubId } = await requireAdmin(clubSlug));
   } catch (error) {
     if (error instanceof UnauthorizedError) redirect('/login');
     throw error;
@@ -34,7 +35,7 @@ export default async function AdminPurchasesPage({
       .order('purchased_at', { ascending: false })
       .limit(20),
     listProducts(),
-    listRecentUploads(5),
+    listRecentUploads(clubId, 5),
   ]);
 
   const purchases: PurchaseRow[] = (rawPurchases ?? []).map((p) => {
