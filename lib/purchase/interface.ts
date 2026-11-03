@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getDefaultClubId } from '@/lib/supabase/default-club';
+import { createClubScopedClient } from '@/lib/supabase/club-scoped';
 import { RawPurchaseRow, PurchaseRecord, IngestionResult, IngestionError, isStudentMemberType } from './types';
 import { matchOrQueue, matchPersonRecord } from './matcher';
 import { z } from 'zod';
@@ -27,9 +28,8 @@ const rawPurchaseRowSchema = z
     message: 'either productId or productName is required',
   });
 
-export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<IngestionResult> {
-  const admin = createAdminClient();
-  const clubId = await getDefaultClubId(admin);
+export async function ingestPurchases(rows: RawPurchaseRow[], clubId: string): Promise<IngestionResult> {
+  const scoped = createClubScopedClient(clubId);
   const errors: IngestionError[] = [];
 
   // Step 1: Validate each row with Zod. Invalid rows are reported as errors
@@ -60,7 +60,7 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
   // 'unmatched' default below.
   let matched: Map<string, import('./types').MatchResult>;
   try {
-    ({ matched } = await matchOrQueue(validRows));
+    ({ matched } = await matchOrQueue(validRows, clubId));
   } catch (error) {
     // A transport-level throw would otherwise abort the whole batch with no
     // partial result. Degrade to "nothing matched" — every row still gets
@@ -82,12 +82,9 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
 
   for (const productName of uniqueProductNames) {
     try {
-      const { data: upserted, error: upsertError } = await admin
+      const { data: upserted, error: upsertError } = await scoped
         .from('product')
-        .upsert(
-          { club_id: clubId, name: productName, kind: 'other' },
-          { onConflict: 'club_id,name', ignoreDuplicates: true }
-        )
+        .upsert({ name: productName, kind: 'other' }, { onConflict: 'club_id,name', ignoreDuplicates: true })
         .select('id')
         .maybeSingle();
 
@@ -103,18 +100,18 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
 
       // ignoreDuplicates means an existing row returns no data from the
       // upsert itself — fetch it explicitly. product.name is now unique only
-      // per club_id (not globally), so the lookup must be scoped the same
-      // way, or maybeSingle() would throw if another club happened to have a
-      // product with the same name.
-      const { data: existing, error: lookupError } = await admin
+      // per club_id (not globally); createClubScopedClient's select()
+      // already filters to this club, so another club's same-named product
+      // can't collide with this lookup.
+      const { data: existing, error: lookupError } = await scoped
         .from('product')
         .select('id')
         .eq('name', productName)
-        .eq('club_id', clubId)
         .maybeSingle();
 
       if (!lookupError && existing) {
-        productMap.set(productName, existing.id);
+        const typedExisting = existing as unknown as { id: string };
+        productMap.set(productName, typedExisting.id);
       } else if (lookupError) {
         console.warn(`Product lookup failed for "${productName}":`, lookupError.message);
       }
@@ -185,10 +182,9 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
 
   for (const purchase of purchases) {
     try {
-      const { data: insertedPurchase, error } = await admin
+      const { data: insertedPurchase, error } = await scoped
         .from('purchase')
         .insert({
-          club_id: clubId,
           person_id: purchase.personId,
           product_id: purchase.productId,
           upload_id: purchase.uploadId,
@@ -219,7 +215,7 @@ export async function ingestPurchases(rows: RawPurchaseRow[]): Promise<Ingestion
         inserted++;
 
         if (purchase.personId && latestByPerson.get(purchase.personId) === purchase) {
-          const { error: updateError } = await admin
+          const { error: updateError } = await scoped
             .from('person')
             .update({ is_student: purchase.isStudent })
             .eq('id', purchase.personId);

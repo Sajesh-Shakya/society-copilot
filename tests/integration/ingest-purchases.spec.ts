@@ -18,8 +18,17 @@ test.describe("ingestPurchases", () => {
   let personId = "";
   let sessionIds: string[] = [];
   let productId: string | undefined;
+  let extraPersonIds: string[] = [];
 
   test.afterEach(async () => {
+    if (extraPersonIds.length > 0) {
+      const { error: extraPersonDeleteError } = await admin.from("person").delete().in("id", extraPersonIds);
+      if (extraPersonDeleteError) {
+        throw new Error(`Cleanup failed deleting extra person(s): ${extraPersonDeleteError.message}`);
+      }
+      extraPersonIds = [];
+    }
+
     // attendance_record must be cleared (or at least un-waived) before
     // purchase is deleted: attendance_record.waived_by_purchase_id FKs to
     // purchase, and this suite's own tests cause rows to actually get
@@ -135,7 +144,7 @@ test.describe("ingestPurchases", () => {
       source: "xlsx_upload",
     };
 
-    const result = await ingestPurchases([row]);
+    const result = await ingestPurchases([row], judoClubId);
 
     expect(result.inserted).toBe(1);
     expect(result.duplicates).toBe(0);
@@ -170,11 +179,11 @@ test.describe("ingestPurchases", () => {
       source: "xlsx_upload",
     };
 
-    const first = await ingestPurchases([row]);
+    const first = await ingestPurchases([row], judoClubId);
     expect(first.inserted).toBe(1);
     expect(await getOutstandingDebt(personId)).toBe(0);
 
-    const second = await ingestPurchases([row]);
+    const second = await ingestPurchases([row], judoClubId);
     expect(second.inserted).toBe(0);
     expect(second.duplicates).toBe(1);
     expect(second.errors).toHaveLength(0);
@@ -208,7 +217,7 @@ test.describe("ingestPurchases", () => {
       source: "xlsx_upload",
     };
 
-    const result = await ingestPurchases([row]);
+    const result = await ingestPurchases([row], judoClubId);
 
     expect(result.inserted).toBe(1);
     expect(result.errors).toHaveLength(0);
@@ -231,7 +240,7 @@ test.describe("ingestPurchases", () => {
       source: "xlsx_upload",
     };
 
-    const result = await ingestPurchases([row]);
+    const result = await ingestPurchases([row], judoClubId);
 
     expect(result.inserted).toBe(0);
     expect(result.errors).toHaveLength(1);
@@ -243,16 +252,19 @@ test.describe("ingestPurchases", () => {
     const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
     const sharedName = `Shared Product ${crypto.randomUUID()}`;
 
-    const judoRow = await ingestPurchases([
-      {
-        externalId: `ext-judo-${crypto.randomUUID()}`,
-        personName: "Judo Buyer",
-        memberType: "Student",
-        productName: sharedName,
-        purchasedAt: new Date(),
-        source: "pluto_api",
-      },
-    ]);
+    const judoRow = await ingestPurchases(
+      [
+        {
+          externalId: `ext-judo-${crypto.randomUUID()}`,
+          personName: "Judo Buyer",
+          memberType: "Student",
+          productName: sharedName,
+          purchasedAt: new Date(),
+          source: "pluto_api",
+        },
+      ],
+      judo!.id
+    );
     expect(judoRow.inserted).toBe(1);
 
     const { data: judoProduct } = await admin
@@ -271,19 +283,68 @@ test.describe("ingestPurchases", () => {
     // the real assertion is that the migration + onConflict fix didn't break
     // Judo's own by-name upsert, proven by judoRow.inserted === 1 above and by
     // this duplicate-call idempotency check:
-    const judoRowAgain = await ingestPurchases([
-      {
-        externalId: `ext-judo-again-${crypto.randomUUID()}`,
-        personName: "Judo Buyer 2",
-        memberType: "Student",
-        productName: sharedName,
-        purchasedAt: new Date(),
-        source: "pluto_api",
-      },
-    ]);
+    const judoRowAgain = await ingestPurchases(
+      [
+        {
+          externalId: `ext-judo-again-${crypto.randomUUID()}`,
+          personName: "Judo Buyer 2",
+          memberType: "Student",
+          productName: sharedName,
+          purchasedAt: new Date(),
+          source: "pluto_api",
+        },
+      ],
+      judo!.id
+    );
     expect(judoRowAgain.inserted).toBe(1);
     const { data: stillOneProduct } = await admin.from("product").select("id").eq("name", sharedName);
     expect(stillOneProduct).toHaveLength(1);
+  });
+
+  test("a row whose CID matches a person in a different club is ingested unmatched, not cross-matched", async () => {
+    const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+    const cid = String(Math.floor(10_000_000 + Math.random() * 80_000_000));
+    const { data: tkdPerson, error } = await admin
+      .from("person")
+      .insert({ club_id: taekwondo!.id, full_name: "Taekwondo Buyer", email: `tkd-ingest-${crypto.randomUUID()}@example.test`, cid })
+      .select("id")
+      .single();
+    if (error) throw error;
+    extraPersonIds.push(tkdPerson!.id);
+
+    const { data: judo } = await admin.from("club").select("id").eq("slug", "judo").single();
+    const product = await admin
+      .from("product")
+      .insert({ club_id: judo!.id, name: `Cross-Club Ingest Test ${crypto.randomUUID()}`, kind: "other" })
+      .select("id")
+      .single();
+    productId = product.data!.id;
+
+    const result = await ingestPurchases(
+      [
+        {
+          externalId: `ext-cross-club-${crypto.randomUUID()}`,
+          personName: "Someone Else",
+          personCid: cid,
+          memberType: "Public", // non-student, so Rule 2's "no fallback" doesn't apply -- isolates the CID check
+          productId,
+          purchasedAt: new Date(),
+          source: "pluto_api",
+        },
+      ],
+      judo!.id
+    );
+    expect(result.inserted).toBe(1);
+
+    const { data: purchase } = await admin
+      .from("purchase")
+      .select("match_status, person_id")
+      .eq("product_id", productId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+    expect(purchase!.match_status).toBe("unmatched");
+    expect(purchase!.person_id).toBeNull();
   });
 });
 

@@ -93,7 +93,10 @@ export async function uploadXlsx(clubSlug: string, formData: FormData): Promise<
     .single();
   if (uploadError) throw uploadError;
 
-  const result = await ingestPurchases(rows.map((row) => ({ ...row, uploadId: upload.id })));
+  const result = await ingestPurchases(
+    rows.map((row) => ({ ...row, uploadId: upload.id })),
+    adminUser.clubId
+  );
 
   const skippedNote = skipped > 0 ? ` (${skipped} skipped as invalid)` : "";
 
