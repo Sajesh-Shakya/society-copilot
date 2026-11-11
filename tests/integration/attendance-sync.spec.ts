@@ -217,6 +217,20 @@ test.describe("syncSessionAttendance", () => {
     // eactivities-credentials.spec.ts. No options.provider override here:
     // this exercises the REAL credential-resolution path, not a fake.
     const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+
+    // Guarded explicitly: if Taekwondo is ever provisioned with real
+    // eActivities credentials, this test must fail loudly here rather
+    // than fall through and fire a real HTTP call at eActivities with a
+    // fake signup id -- that API's own 401/403 handling triggers IP-wide
+    // bans (see lib/eactivities/client.ts's doc comment).
+    const { data: existingTkdRow } = await admin
+      .from("club_credential")
+      .select("club_id")
+      .eq("club_id", taekwondo!.id)
+      .eq("provider", "eactivities")
+      .maybeSingle();
+    expect(existingTkdRow).toBeNull();
+
     const { data: tkdSession, error: tkdSessionError } = await admin
       .from("session")
       .insert({

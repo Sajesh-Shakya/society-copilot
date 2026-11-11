@@ -43,7 +43,18 @@ test.describe("getEactivitiesCredentials", () => {
     // Judo now has a real club_credential row (migrated as part of this
     // plan's Task 5) -- Taekwondo is the club guaranteed to have none,
     // since every test in this file that inserts a row for it cleans up
-    // via the shared afterEach above.
+    // via the shared afterEach above. Guarded explicitly rather than just
+    // assumed: if Taekwondo is ever provisioned for real, this test
+    // should fail loudly here, not attempt a real insert and collide on
+    // the (club_id, provider) primary key.
+    const { data: existingTkdRow } = await admin
+      .from("club_credential")
+      .select("club_id")
+      .eq("club_id", taekwondoClubId)
+      .eq("provider", "eactivities")
+      .maybeSingle();
+    expect(existingTkdRow).toBeNull();
+
     await expect(getEactivitiesCredentials(taekwondoClubId)).rejects.toThrow(EactivitiesNotConfiguredError);
   });
 
