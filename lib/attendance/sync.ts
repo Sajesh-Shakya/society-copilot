@@ -1,5 +1,6 @@
 import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 import { EactivitiesProvider } from "@/lib/eactivities/provider";
+import { getEactivitiesCredentials } from "@/lib/eactivities/credentials";
 import type { Attendee } from "@/lib/eactivities/types";
 import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
 import { reapplyWaiversForPerson } from "@/lib/purchase/interface";
@@ -122,7 +123,7 @@ export async function syncSessionAttendance(
     }
   }
 
-  const provider = options.provider ?? new EactivitiesProvider();
+  const provider = options.provider ?? new EactivitiesProvider(await getEactivitiesCredentials(clubId));
   const signup = await provider.getSignup(typedSession.eactivities_signup_id);
 
   let personsCreated = 0;

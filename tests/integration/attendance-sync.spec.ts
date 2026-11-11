@@ -209,6 +209,20 @@ test.describe("syncSessionAttendance", () => {
     expect(created).toBeTruthy();
     personIds.push(created!.id);
   });
+
+  test("throws EactivitiesNotConfiguredError before making any HTTP call when the club has no eActivities credentials", async () => {
+    const sessionId = await createSession(`signup-${crypto.randomUUID()}`);
+    sessionIds.push(sessionId);
+
+    // No options.provider override here -- this exercises the REAL
+    // credential-resolution path, not a fake. judoClubId is assumed to
+    // have no club_credential row at this point in the plan (Task 5,
+    // which seeds Judo's real row, runs after this task) -- if that
+    // assumption no longer holds when this test runs, swap in a disposable
+    // club/session with a guaranteed-absent credential row instead.
+    const { EactivitiesNotConfiguredError } = await import("@/lib/eactivities/types");
+    await expect(syncSessionAttendance(sessionId, judoClubId)).rejects.toThrow(EactivitiesNotConfiguredError);
+  });
 });
 
 test.describe("POST /api/sessions/[sessionId]/sync", () => {
