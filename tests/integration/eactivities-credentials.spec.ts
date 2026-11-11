@@ -40,7 +40,11 @@ test.describe("getEactivitiesCredentials", () => {
   });
 
   test("throws EactivitiesNotConfiguredError when no row exists for the club", async () => {
-    await expect(getEactivitiesCredentials(judoClubId)).rejects.toThrow(EactivitiesNotConfiguredError);
+    // Judo now has a real club_credential row (migrated as part of this
+    // plan's Task 5) -- Taekwondo is the club guaranteed to have none,
+    // since every test in this file that inserts a row for it cleans up
+    // via the shared afterEach above.
+    await expect(getEactivitiesCredentials(taekwondoClubId)).rejects.toThrow(EactivitiesNotConfiguredError);
   });
 
   test("throws when the stored credentials are missing cspCode", async () => {

@@ -211,17 +211,27 @@ test.describe("syncSessionAttendance", () => {
   });
 
   test("throws EactivitiesNotConfiguredError before making any HTTP call when the club has no eActivities credentials", async () => {
-    const sessionId = await createSession(`signup-${crypto.randomUUID()}`);
-    sessionIds.push(sessionId);
+    // Judo now has a real club_credential row (migrated as part of this
+    // plan's Task 5), so this needs a session under a club guaranteed to
+    // have none -- Taekwondo, same fallback used in
+    // eactivities-credentials.spec.ts. No options.provider override here:
+    // this exercises the REAL credential-resolution path, not a fake.
+    const { data: taekwondo } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+    const { data: tkdSession, error: tkdSessionError } = await admin
+      .from("session")
+      .insert({
+        club_id: taekwondo!.id,
+        title: "Attendance Sync Credential Test Session",
+        starts_at: new Date().toISOString(),
+        eactivities_signup_id: `signup-${crypto.randomUUID()}`,
+      })
+      .select("id")
+      .single();
+    if (tkdSessionError) throw tkdSessionError;
+    sessionIds.push(tkdSession!.id);
 
-    // No options.provider override here -- this exercises the REAL
-    // credential-resolution path, not a fake. judoClubId is assumed to
-    // have no club_credential row at this point in the plan (Task 5,
-    // which seeds Judo's real row, runs after this task) -- if that
-    // assumption no longer holds when this test runs, swap in a disposable
-    // club/session with a guaranteed-absent credential row instead.
     const { EactivitiesNotConfiguredError } = await import("@/lib/eactivities/types");
-    await expect(syncSessionAttendance(sessionId, judoClubId)).rejects.toThrow(EactivitiesNotConfiguredError);
+    await expect(syncSessionAttendance(tkdSession!.id, taekwondo!.id)).rejects.toThrow(EactivitiesNotConfiguredError);
   });
 });
 
