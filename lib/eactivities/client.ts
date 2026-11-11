@@ -1,4 +1,4 @@
-import { EactivitiesApiError, EactivitiesNotConfiguredError } from "./types";
+import { EactivitiesApiError } from "./types";
 
 const BASE_URL = "https://eactivities.union.ic.ac.uk/API";
 
@@ -19,10 +19,7 @@ const BASE_URL = "https://eactivities.union.ic.ac.uk/API";
  * previously sent a nonexistent "X-API-Key" header and so never
  * authenticated at all; every eActivities call failed until this fix.
  */
-export async function eactivitiesFetch<T>(path: string): Promise<T> {
-  const apiKey = process.env.EACTIVITIES_API_KEY;
-  if (!apiKey) throw new EactivitiesNotConfiguredError("EACTIVITIES_API_KEY is not set.");
-
+export async function eactivitiesFetch<T>(path: string, apiKey: string): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "GET",
     headers: {
@@ -51,8 +48,6 @@ export async function eactivitiesFetch<T>(path: string): Promise<T> {
   );
 }
 
-export function cspPath(path: string): string {
-  const centre = process.env.EACTIVITIES_CSP_CODE;
-  if (!centre) throw new EactivitiesNotConfiguredError("EACTIVITIES_CSP_CODE is not set.");
-  return `/csp/${centre}${path}`;
+export function cspPath(path: string, cspCode: string): string {
+  return `/csp/${cspCode}${path}`;
 }

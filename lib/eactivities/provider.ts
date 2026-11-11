@@ -1,5 +1,6 @@
 import { cspPath, eactivitiesFetch } from "./client";
 import type { SignupDetail, WhatsOnEvent, WhatsOnEventDetail } from "./types";
+import type { EactivitiesCredentials } from "./credentials";
 
 /**
  * Implements the eActivities-backed subset of SocietyDataProvider needed by
@@ -10,15 +11,26 @@ import type { SignupDetail, WhatsOnEvent, WhatsOnEventDetail } from "./types";
  * aren't needed by this feature so aren't built yet.
  */
 export class EactivitiesProvider {
+  constructor(private credentials: EactivitiesCredentials) {}
+
   async getEvents(): Promise<WhatsOnEvent[]> {
-    return eactivitiesFetch<WhatsOnEvent[]>(cspPath("/whatson"));
+    return eactivitiesFetch<WhatsOnEvent[]>(
+      cspPath("/whatson", this.credentials.cspCode),
+      this.credentials.apiKey
+    );
   }
 
   async getEvent(eventId: string): Promise<WhatsOnEventDetail> {
-    return eactivitiesFetch<WhatsOnEventDetail>(cspPath(`/whatson/${eventId}`));
+    return eactivitiesFetch<WhatsOnEventDetail>(
+      cspPath(`/whatson/${eventId}`, this.credentials.cspCode),
+      this.credentials.apiKey
+    );
   }
 
   async getSignup(signupId: string): Promise<SignupDetail> {
-    return eactivitiesFetch<SignupDetail>(cspPath(`/signups/${signupId}`));
+    return eactivitiesFetch<SignupDetail>(
+      cspPath(`/signups/${signupId}`, this.credentials.cspCode),
+      this.credentials.apiKey
+    );
   }
 }
