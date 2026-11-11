@@ -9,23 +9,28 @@ import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 import { EactivitiesProvider } from "@/lib/eactivities/provider";
+import { getEactivitiesCredentials } from "@/lib/eactivities/credentials";
+import { EactivitiesNotConfiguredError } from "@/lib/eactivities/types";
 import { syncSessionAttendance } from "@/lib/attendance/sync";
 import { getSessionWithAttendance, assertSessionBelongsToClub } from "@/lib/attendance/queries";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
 import { reapplyWaiversForPerson } from "@/lib/purchase/interface";
 
-const provider = new EactivitiesProvider();
-
 // ---------------------------------------------------------------------------
 // 3.0 — session creation / signup binding (AC-8)
 // ---------------------------------------------------------------------------
 
 export async function getEventSignups(clubSlug: string, eventId: string) {
-  await requireAdmin(clubSlug);
-  const gate = process.env.EACTIVITIES_CLUB_SLUG;
-  if (gate && clubSlug !== gate) {
-    throw new Error("eActivities isn't available for this club yet — use CSV import instead.");
+  const { clubId } = await requireAdmin(clubSlug);
+  let provider: EactivitiesProvider;
+  try {
+    provider = new EactivitiesProvider(await getEactivitiesCredentials(clubId));
+  } catch (error) {
+    if (error instanceof EactivitiesNotConfiguredError) {
+      throw new Error("eActivities isn't available for this club yet — use CSV import instead.");
+    }
+    throw error;
   }
   const event = await provider.getEvent(eventId);
   return {
@@ -53,9 +58,13 @@ export async function createSessionFromSignup(
   input: z.infer<typeof createSessionSchema>
 ): Promise<{ sessionId: string }> {
   const { clubId } = await requireAdmin(clubSlug);
-  const gate = process.env.EACTIVITIES_CLUB_SLUG;
-  if (gate && clubSlug !== gate) {
-    throw new Error("eActivities isn't available for this club yet — use CSV import instead.");
+  try {
+    await getEactivitiesCredentials(clubId);
+  } catch (error) {
+    if (error instanceof EactivitiesNotConfiguredError) {
+      throw new Error("eActivities isn't available for this club yet — use CSV import instead.");
+    }
+    throw error;
   }
   const parsed = createSessionSchema.parse(input);
   const scoped = createClubScopedClient(clubId);

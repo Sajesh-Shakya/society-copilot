@@ -2,6 +2,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { clubPath } from "@/lib/club-path";
 import { EactivitiesProvider } from "@/lib/eactivities/provider";
+import { getEactivitiesCredentials } from "@/lib/eactivities/credentials";
+import { EactivitiesNotConfiguredError } from "@/lib/eactivities/types";
 import { SessionPicker } from "@/components/attendance/session-picker";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { requireAdmin, UnauthorizedError } from "@/lib/auth/require-admin";
@@ -17,15 +19,34 @@ export default async function NewSessionPage({
   params: Promise<{ clubSlug: string }>;
 }) {
   const { clubSlug } = await params;
+  let clubId: string;
   try {
-    await requireAdmin(clubSlug);
+    ({ clubId } = await requireAdmin(clubSlug));
   } catch (error) {
     if (error instanceof UnauthorizedError) redirect("/login");
     throw error;
   }
 
-  const provider = new EactivitiesProvider();
-  const events = await provider.getEvents();
+  let events: Awaited<ReturnType<EactivitiesProvider["getEvents"]>>;
+  try {
+    const provider = new EactivitiesProvider(await getEactivitiesCredentials(clubId));
+    events = await provider.getEvents();
+  } catch (error) {
+    if (error instanceof EactivitiesNotConfiguredError) {
+      return (
+        <div className="mx-auto max-w-2xl px-4 py-10">
+          <Link href={clubPath(clubSlug, "/sessions")} className="text-sm text-muted-foreground underline">
+            ← All sessions
+          </Link>
+          <h1 className="mt-4 text-2xl font-semibold tracking-tight">New session</h1>
+          <p className="mt-4 text-sm text-muted-foreground">
+            eActivities isn&apos;t available for this club yet — use CSV import instead.
+          </p>
+        </div>
+      );
+    }
+    throw error;
+  }
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-10">
