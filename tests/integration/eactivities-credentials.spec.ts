@@ -1,0 +1,69 @@
+import { test, expect } from "@playwright/test";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { getEactivitiesCredentials } from "@/lib/eactivities/credentials";
+import { EactivitiesNotConfiguredError } from "@/lib/eactivities/types";
+
+const admin = createAdminClient();
+
+let judoClubId: string;
+let taekwondoClubId: string;
+test.beforeAll(async () => {
+  const { data: judo, error: judoError } = await admin.from("club").select("id").eq("slug", "judo").single();
+  if (judoError) throw judoError;
+  judoClubId = judo.id;
+  const { data: taekwondo, error: tkdError } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+  if (tkdError) throw tkdError;
+  taekwondoClubId = taekwondo.id;
+});
+
+test.describe("getEactivitiesCredentials", () => {
+  let insertedClubIds: string[] = [];
+
+  test.afterEach(async () => {
+    if (insertedClubIds.length === 0) return;
+    const { error } = await admin.from("club_credential").delete().in("club_id", insertedClubIds).eq("provider", "eactivities");
+    if (error) throw error;
+    insertedClubIds = [];
+  });
+
+  test("returns the stored apiKey/cspCode for a club with a credential row", async () => {
+    const { error } = await admin.from("club_credential").insert({
+      club_id: taekwondoClubId,
+      provider: "eactivities",
+      credentials: { apiKey: "test-api-key-123", cspCode: "test-csp-456" },
+    });
+    if (error) throw error;
+    insertedClubIds.push(taekwondoClubId);
+
+    const result = await getEactivitiesCredentials(taekwondoClubId);
+    expect(result).toEqual({ apiKey: "test-api-key-123", cspCode: "test-csp-456" });
+  });
+
+  test("throws EactivitiesNotConfiguredError when no row exists for the club", async () => {
+    await expect(getEactivitiesCredentials(judoClubId)).rejects.toThrow(EactivitiesNotConfiguredError);
+  });
+
+  test("throws when the stored credentials are missing cspCode", async () => {
+    const { error } = await admin.from("club_credential").insert({
+      club_id: taekwondoClubId,
+      provider: "eactivities",
+      credentials: { apiKey: "test-api-key-only" },
+    });
+    if (error) throw error;
+    insertedClubIds.push(taekwondoClubId);
+
+    await expect(getEactivitiesCredentials(taekwondoClubId)).rejects.toThrow(EactivitiesNotConfiguredError);
+  });
+
+  test("throws when the stored credentials are missing apiKey", async () => {
+    const { error } = await admin.from("club_credential").insert({
+      club_id: taekwondoClubId,
+      provider: "eactivities",
+      credentials: { cspCode: "test-csp-only" },
+    });
+    if (error) throw error;
+    insertedClubIds.push(taekwondoClubId);
+
+    await expect(getEactivitiesCredentials(taekwondoClubId)).rejects.toThrow(EactivitiesNotConfiguredError);
+  });
+});

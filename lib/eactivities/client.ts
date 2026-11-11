@@ -21,7 +21,7 @@ const BASE_URL = "https://eactivities.union.ic.ac.uk/API";
  */
 export async function eactivitiesFetch<T>(path: string): Promise<T> {
   const apiKey = process.env.EACTIVITIES_API_KEY;
-  if (!apiKey) throw new EactivitiesNotConfiguredError("EACTIVITIES_API_KEY");
+  if (!apiKey) throw new EactivitiesNotConfiguredError("EACTIVITIES_API_KEY is not set.");
 
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "GET",
@@ -53,6 +53,6 @@ export async function eactivitiesFetch<T>(path: string): Promise<T> {
 
 export function cspPath(path: string): string {
   const centre = process.env.EACTIVITIES_CSP_CODE;
-  if (!centre) throw new EactivitiesNotConfiguredError("EACTIVITIES_CSP_CODE");
+  if (!centre) throw new EactivitiesNotConfiguredError("EACTIVITIES_CSP_CODE is not set.");
   return `/csp/${centre}${path}`;
 }

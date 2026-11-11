@@ -53,12 +53,8 @@ export class EactivitiesApiError extends Error {
 }
 
 export class EactivitiesNotConfiguredError extends Error {
-  constructor(missingVar: string) {
-    super(
-      `${missingVar} is not set. See core/INTEGRATIONS.md "Real API reference" ` +
-        `for what's needed — EACTIVITIES_API_KEY and EACTIVITIES_CSP_CODE must ` +
-        `both be set in .env.local before any eActivities call can succeed.`
-    );
+  constructor(message: string) {
+    super(message);
     this.name = "EactivitiesNotConfiguredError";
   }
 }
