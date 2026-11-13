@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { createClient as createServerClient } from "@/lib/supabase/server";
+import { getSignedInEmail } from "@/lib/auth/session";
 import { clubPath } from "@/lib/club-path";
 
 export default async function ClubIndexPage({
@@ -7,11 +7,8 @@ export default async function ClubIndexPage({
 }: {
   params: Promise<{ clubSlug: string }>;
 }) {
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const email = await getSignedInEmail();
+  if (!email) redirect("/login");
 
   const { clubSlug } = await params;
   redirect(clubPath(clubSlug, "/sessions"));

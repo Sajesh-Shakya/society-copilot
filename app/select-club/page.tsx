@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { createClient as createServerClient } from "@/lib/supabase/server";
+import { getSignedInEmail } from "@/lib/auth/session";
 import { listAdminClubs } from "@/lib/auth/require-admin";
 import { clubPath } from "@/lib/club-path";
 import { SignOutButton } from "@/components/auth/sign-out-button";
@@ -8,13 +8,10 @@ import { SignOutButton } from "@/components/auth/sign-out-button";
 export const dynamic = "force-dynamic";
 
 export default async function SelectClubPage() {
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user?.email) redirect("/login");
+  const email = await getSignedInEmail();
+  if (!email) redirect("/login");
 
-  const clubs = await listAdminClubs(user.email);
+  const clubs = await listAdminClubs(email);
   if (clubs.length === 0) redirect("/login");
   if (clubs.length === 1) redirect(clubPath(clubs[0].slug, "/sessions"));
 

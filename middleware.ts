@@ -2,9 +2,9 @@ import { type NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/middleware";
 
 export async function middleware(request: NextRequest) {
-  const { supabaseResponse, user } = await createClient(request);
+  const { supabaseResponse, email } = await createClient(request);
 
-  if (!user) {
+  if (!email) {
     const loginUrl = new URL("/login", request.url);
     return NextResponse.redirect(loginUrl);
   }
