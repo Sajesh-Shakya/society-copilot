@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { PendingLink } from '@/components/nav/pending-link';
 import { requireAdmin, UnauthorizedError } from '@/lib/auth/require-admin';
 import { redirect } from 'next/navigation';
 import { createClubScopedClient } from '@/lib/supabase/club-scoped';
@@ -71,9 +71,9 @@ export default async function AdminPurchasesPage({
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:py-10">
-      <Link href={clubPath(clubSlug, "/sessions")} className="text-sm text-muted-foreground underline">
+      <PendingLink href={clubPath(clubSlug, "/sessions")} className="text-sm text-muted-foreground underline">
         ← All sessions
-      </Link>
+      </PendingLink>
       <h1 className="mt-4 text-2xl font-semibold tracking-tight">Purchase Management</h1>
 
       <div className="mt-8 rounded-lg border p-4">

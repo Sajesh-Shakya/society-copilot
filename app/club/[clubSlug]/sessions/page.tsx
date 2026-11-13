@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { PendingLink } from "@/components/nav/pending-link";
 import { requireAdmin, UnauthorizedError } from "@/lib/auth/require-admin";
 import { redirect } from "next/navigation";
 import { clubPath } from "@/lib/club-path";
@@ -45,24 +45,24 @@ export default async function SessionsIndexPage({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button asChild variant="ghost" size="sm">
-            <Link href={clubPath(clubSlug, "/admin/unpaid")}>Unpaid sessions</Link>
+            <PendingLink href={clubPath(clubSlug, "/admin/unpaid")}>Unpaid sessions</PendingLink>
           </Button>
           <Button asChild variant="ghost" size="sm">
-            <Link href={clubPath(clubSlug, "/admin/chase-inbox")} className="flex items-center gap-2">
+            <PendingLink href={clubPath(clubSlug, "/admin/chase-inbox")} className="flex items-center gap-2">
               Chase inbox
               {failedChaseCount > 0 && (
                 <Badge variant="destructive">{failedChaseCount} failed</Badge>
               )}
-            </Link>
+            </PendingLink>
           </Button>
           <Button asChild variant="ghost" size="sm">
-            <Link href={clubPath(clubSlug, "/admin/purchases")}>Purchases</Link>
+            <PendingLink href={clubPath(clubSlug, "/admin/purchases")}>Purchases</PendingLink>
           </Button>
           <Button asChild variant="outline">
-            <Link href={clubPath(clubSlug, "/sessions/new")}>New session (eActivities)</Link>
+            <PendingLink href={clubPath(clubSlug, "/sessions/new")}>New session (eActivities)</PendingLink>
           </Button>
           <Button asChild variant="outline">
-            <Link href={clubPath(clubSlug, "/sessions/import")}>New session (CSV import)</Link>
+            <PendingLink href={clubPath(clubSlug, "/sessions/import")}>New session (CSV import)</PendingLink>
           </Button>
           <SignOutButton />
         </div>
@@ -124,9 +124,10 @@ function SessionRow({
   clubSlug: string;
 }) {
   return (
-    <Link
+    <PendingLink
       href={clubPath(clubSlug, `/sessions/${session.id}`)}
-      className="flex flex-col gap-2 rounded-lg border p-4 hover:bg-muted sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+      spinnerClassName="absolute right-2 top-2 text-muted-foreground"
+      className="relative flex flex-col gap-2 rounded-lg border p-4 hover:bg-muted sm:flex-row sm:items-center sm:justify-between sm:gap-4"
     >
       <div>
         <p className={`font-medium ${session.cancelledAt ? "line-through text-muted-foreground" : ""}`}>
@@ -140,6 +141,6 @@ function SessionRow({
           {session.attendeeCount} attendee{session.attendeeCount === 1 ? "" : "s"}
         </Badge>
       </div>
-    </Link>
+    </PendingLink>
   );
 }
