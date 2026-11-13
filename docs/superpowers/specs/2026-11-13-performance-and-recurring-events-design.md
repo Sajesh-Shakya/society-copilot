@@ -70,8 +70,9 @@ Changes:
 - Prefetch: on the sessions list, the session whose window contains "now" gets
   `prefetch={true}` (full page + data, cached 5 min by default). Window = `starts_at − 1h`
   to `ends_at + 1h`; until Project 3 adds `ends_at`, use `starts_at + 2h` as the assumed
-  end. The attendance screen already layers Realtime on its initial render, so a few
-  minutes of staleness there is harmless.
+  end. The attendance screen re-fetches the roster once its Realtime channel reports
+  SUBSCRIBED (merging around any in-flight optimistic toggles), so prefetched data is
+  refreshed on mount and a stale cached payload is not shown for long.
 - First task of the plan: confirm the Vercel function region and the Supabase region are
   the same (vercel.json sets no region). A mismatch multiplies every hop above and is fixed
   with a one-line `regions` setting.

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -22,6 +22,7 @@ import {
   getAttendanceList,
   setSessionCancelled,
 } from "@/lib/attendance/actions";
+import { reconcileRows } from "@/lib/attendance/reconcile";
 import { fuzzyMatches } from "@/lib/attendance/fuzzy-match";
 import type { AttendanceRow, SessionWithAttendance } from "@/lib/attendance/queries";
 import { AddAttendee } from "@/components/attendance/add-attendee";
@@ -53,6 +54,8 @@ export function AttendanceScreen({
   const [search, setSearch] = useState("");
   const [cancelledAt, setCancelledAt] = useState<string | null>(session.cancelledAt);
   const [isTogglingCancel, startCancelToggle] = useTransition();
+  // Optimistic toggles not yet confirmed by the server (personId -> attended).
+  const pendingToggles = useRef(new Map<string, boolean>());
 
   // AC-3: propagate toggle changes to every open attendance screen for this
   // session within 2s. UPDATE payloads carry attended directly, so patch
@@ -60,6 +63,7 @@ export function AttendanceScreen({
   // columns (person_id) — no joined person name/email — so a genuinely new
   // row triggers a refetch instead of trying to render partial data.
   useEffect(() => {
+    let cancelled = false;
     const supabase = createClient();
     const channel = supabase
       .channel(`attendance:${session.id}`)
@@ -87,25 +91,44 @@ export function AttendanceScreen({
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        // This page may have come from the router's prefetch cache (or the
+        // render-to-subscribe gap may have dropped events), so re-fetch the
+        // roster once the channel is live.
+        if (status === "SUBSCRIBED") {
+          getAttendanceList(clubSlug, session.id)
+            .then((fresh) => {
+              if (!cancelled) setRows(reconcileRows(fresh, pendingToggles.current));
+            })
+            .catch(() => {});
+        }
+      });
 
     return () => {
+      cancelled = true;
       supabase.removeChannel(channel);
     };
   }, [session.id, clubSlug]);
 
   function handleToggle(row: AttendanceRow, attended: boolean) {
+    pendingToggles.current.set(row.personId, attended);
     setRows((prev) =>
       prev.map((r) => (r.personId === row.personId ? { ...r, attended } : r))
     );
-    toggleAttendance(clubSlug, { sessionId: session.id, personId: row.personId, attended }).catch(
-      () => {
+    const settle = () => {
+      if (pendingToggles.current.get(row.personId) === attended) {
+        pendingToggles.current.delete(row.personId);
+      }
+    };
+    toggleAttendance(clubSlug, { sessionId: session.id, personId: row.personId, attended })
+      .then(settle)
+      .catch(() => {
+        settle();
         toast.error(`Couldn't update ${row.fullName}`);
         setRows((prev) =>
           prev.map((r) => (r.personId === row.personId ? { ...r, attended: !attended } : r))
         );
-      }
-    );
+      });
   }
 
   function handleSync() {
