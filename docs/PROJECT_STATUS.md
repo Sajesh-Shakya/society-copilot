@@ -290,6 +290,27 @@ identity — a per-club sender display name/domain hasn't been built.
   secret, sync trigger secret, is a plain env var with no UI either) and
   keeps scope small for something that happens rarely, per club.
 
+## Performance baseline (2026-11-13, navigation-speed)
+
+- **Supabase region**: `eu-west-2` (London), project `society-copilot`
+  (ref `gszhsinwewcfyqjixpgu`), from the Supabase MCP `get_project`.
+- **Vercel function region: NOT VERIFIED.** The Vercel MCP session had
+  expired ("needs you to sign in again") and the local `vercel` CLI token
+  is invalid, so the project's region setting could not be read.
+  `vercel.json` sets no `regions`, so unless the dashboard overrides it
+  the Vercel default applies, which for new projects is `iad1`
+  (Washington DC, North America). If so, every function-to-Supabase
+  round trip crosses the Atlantic.
+- **Baseline durations: NOT RECORDED.** Runtime logs were unreachable for
+  the same reason, so there are no measured numbers for
+  `GET /club/judo/sessions` or `/club/judo/admin/purchases`. No figures
+  are invented here; Task 7 needs a baseline captured (dashboard Logs,
+  or `get_runtime_logs` after re-auth) before it can compare.
+- **Region decision: `vercel.json` left unchanged.** Adding
+  `"regions": ["lhr1"]` is the likely fix (lhr1 = London, next to
+  eu-west-2), but it should only go in once the current Vercel region is
+  confirmed to be on a different continent.
+
 ## Known open items
 
 - **eActivities live sync**: down again as of 2026-11-13 (`whatson`/
