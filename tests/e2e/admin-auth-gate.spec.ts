@@ -28,6 +28,16 @@ test.describe("admin route gating", () => {
     await expect(page).toHaveURL(/\/login$/);
   });
 
+  test("a garbled Supabase auth cookie redirects to /login rather than erroring", async ({ page, baseURL }) => {
+    const ref = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).hostname.split(".")[0];
+    await page.context().addCookies([
+      { name: `sb-${ref}-auth-token`, value: "not-a-valid-session{{{", url: baseURL! },
+    ]);
+    const response = await page.goto("/club/judo/sessions");
+    expect(response?.status()).toBeLessThan(500);
+    await expect(page).toHaveURL(/\/login$/);
+  });
+
   test("the old /sessions path no longer exists", async ({ page }) => {
     const response = await page.goto("/sessions");
     expect(response?.status()).toBe(404);

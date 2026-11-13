@@ -111,6 +111,20 @@ test.describe("checkAdminForClub", () => {
     expect(notAdmin.message).toBe(unknown.message);
   });
 
+  test("returns the right club for an admin of both judo and taekwondo", async () => {
+    const { data: judo } = await admin.from("club").select("id, name").eq("slug", "judo").single();
+    const { data: tkd } = await admin.from("club").select("id, name").eq("slug", "taekwondo").single();
+    const email = `both-clubs-${crypto.randomUUID()}@example.test`;
+    emails.push(email);
+    await admin.from("admin").insert([
+      { email, club_id: judo!.id },
+      { email, club_id: tkd!.id },
+    ]);
+
+    await expect(checkAdminForClub(email, "taekwondo")).resolves.toEqual({ clubId: tkd!.id, clubName: tkd!.name });
+    await expect(checkAdminForClub(email, "judo")).resolves.toEqual({ clubId: judo!.id, clubName: judo!.name });
+  });
+
   test("deleting the admin row makes the next call refuse", async () => {
     const { data: judo } = await admin.from("club").select("id").eq("slug", "judo").single();
     const email = `revoked-${crypto.randomUUID()}@example.test`;
