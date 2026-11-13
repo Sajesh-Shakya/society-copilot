@@ -3,6 +3,7 @@ import { requireAdmin, UnauthorizedError } from "@/lib/auth/require-admin";
 import { redirect } from "next/navigation";
 import { clubPath } from "@/lib/club-path";
 import { listRecentSessions } from "@/lib/attendance/queries";
+import { isInPrefetchWindow } from "@/lib/attendance/event-window";
 import { countFailedChaseEmails } from "@/lib/chase/queries";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -123,9 +124,16 @@ function SessionRow({
   };
   clubSlug: string;
 }) {
+  const inWindow = isInPrefetchWindow({
+    startsAt: new Date(session.startsAt),
+    endsAt: null, // no end time stored yet; the helper assumes start + 2h
+    cancelledAt: session.cancelledAt ? new Date(session.cancelledAt) : null,
+    now: new Date(),
+  });
   return (
     <PendingLink
       href={clubPath(clubSlug, `/sessions/${session.id}`)}
+      prefetch={inWindow ? true : null}
       spinnerClassName="absolute right-2 top-2 text-muted-foreground"
       className="relative flex flex-col gap-2 rounded-lg border p-4 hover:bg-muted sm:flex-row sm:items-center sm:justify-between sm:gap-4"
     >
