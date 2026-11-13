@@ -1,4 +1,5 @@
-import { createClient as createServerClient } from "@/lib/supabase/server";
+import { cache } from "react";
+import { getSignedInEmail } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export class UnauthorizedError extends Error {}
@@ -20,48 +21,45 @@ export async function checkAdminForClub(
 ): Promise<{ clubId: string; clubName: string }> {
   const admin = createAdminClient();
 
-  const { data: club, error: clubError } = await admin
-    .from("club")
-    .select("id, name")
-    .eq("slug", clubSlug)
-    .maybeSingle();
-  if (clubError) throw clubError;
-  if (!club) throw new UnauthorizedError(NOT_AUTHORIZED_MESSAGE);
-
-  const { data: row, error: adminError } = await admin
+  // One round trip: the !inner join drops admin rows whose club doesn't match
+  // the slug, so an unknown slug and a non-admin both come back as no row.
+  const { data: row, error } = await admin
     .from("admin")
-    .select("email")
+    .select("club_id, club:club_id!inner(id, name, slug)")
     .eq("email", email.toLowerCase())
-    .eq("club_id", club.id)
+    .eq("club.slug", clubSlug)
     .maybeSingle();
-  if (adminError) throw adminError;
+  if (error) throw error;
   if (!row) throw new UnauthorizedError(NOT_AUTHORIZED_MESSAGE);
+
+  // supabase-js may type a to-one join as an array (same as listAdminClubs).
+  const club = Array.isArray(row.club) ? row.club[0] : row.club;
+  if (!club) throw new UnauthorizedError(NOT_AUTHORIZED_MESSAGE);
 
   return { clubId: club.id, clubName: club.name };
 }
 
 /**
  * The actual enforcement point for admin-only Server Actions and pages.
- * Re-checks club membership on every call, same as the pre-multi-tenancy
- * version re-checked admin_allowlist, so revoking access takes effect
- * immediately without invalidating the Supabase session.
+ * Re-checks club membership against the DB on every request, so revoking
+ * access takes effect immediately without invalidating the Supabase session.
+ * Memoised with React cache so repeated calls for the same slug within a
+ * single request (layout + page + actions) share one lookup; the cache never
+ * outlives the request.
  */
-export async function requireAdmin(
-  clubSlug: string
-): Promise<{ email: string; clubId: string; clubName: string }> {
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+export const requireAdmin = cache(
+  async (
+    clubSlug: string
+  ): Promise<{ email: string; clubId: string; clubName: string }> => {
+    const email = await getSignedInEmail();
+    if (!email) {
+      throw new UnauthorizedError("Not signed in");
+    }
 
-  if (!user?.email) {
-    throw new UnauthorizedError("Not signed in");
+    const { clubId, clubName } = await checkAdminForClub(email, clubSlug);
+    return { email, clubId, clubName };
   }
-
-  const email = user.email.toLowerCase();
-  const { clubId, clubName } = await checkAdminForClub(email, clubSlug);
-  return { email, clubId, clubName };
-}
+);
 
 /**
  * Every club a signed-in email administers -- used by the post-sign-in

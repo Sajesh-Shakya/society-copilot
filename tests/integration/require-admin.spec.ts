@@ -91,4 +91,34 @@ test.describe("checkAdminForClub", () => {
       UnauthorizedError
     );
   });
+  test("accepts a mixed-case email", async () => {
+    const { data: judo } = await admin.from("club").select("id").eq("slug", "judo").single();
+    const lower = `mixed-case-${crypto.randomUUID()}@example.test`;
+    emails.push(lower);
+    await admin.from("admin").insert({ email: lower, club_id: judo!.id });
+
+    const mixed = lower.replace(/^mixed-case/, "Mixed-Case").replace("@example", "@EXAMPLE");
+    await expect(checkAdminForClub(mixed, "judo")).resolves.toEqual({ clubId: judo!.id, clubName: "Judo" });
+  });
+
+  test("gives the identical message for unknown slug and non-admin", async () => {
+    const email = `same-msg-${crypto.randomUUID()}@example.test`;
+    const unknown = await checkAdminForClub(email, `unknown-${crypto.randomUUID()}`).catch((e) => e);
+    const notAdmin = await checkAdminForClub(email, "judo").catch((e) => e);
+    expect(unknown).toBeInstanceOf(UnauthorizedError);
+    expect(notAdmin).toBeInstanceOf(UnauthorizedError);
+    expect(unknown.message).toBe("Not authorized for this club.");
+    expect(notAdmin.message).toBe(unknown.message);
+  });
+
+  test("deleting the admin row makes the next call refuse", async () => {
+    const { data: judo } = await admin.from("club").select("id").eq("slug", "judo").single();
+    const email = `revoked-${crypto.randomUUID()}@example.test`;
+    emails.push(email);
+    await admin.from("admin").insert({ email, club_id: judo!.id });
+    await expect(checkAdminForClub(email, "judo")).resolves.toMatchObject({ clubId: judo!.id });
+
+    await admin.from("admin").delete().eq("email", email);
+    await expect(checkAdminForClub(email, "judo")).rejects.toBeInstanceOf(UnauthorizedError);
+  });
 });
