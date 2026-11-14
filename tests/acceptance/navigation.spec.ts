@@ -9,6 +9,11 @@ test("(a) signing in lands on the sessions page with its heading", async ({ sign
 test("(b) navigating to Purchases shows a pending spinner, then the skeleton, then the page", async ({
   signedIn: page,
 }) => {
+  // Needs `next dev` (the config's own server): dev does not prefetch, and the
+  // chunk name matched below is Turbopack-dev specific. An external server
+  // (ACCEPTANCE_BASE_URL) may be a production build where neither holds.
+  test.skip(!!process.env.ACCEPTANCE_BASE_URL, "needs the config's own `next dev` server");
+
   const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   // Phase 1: the RSC request for the purchases page is slow -> the link shows
@@ -53,4 +58,6 @@ test("(e) the throwaway admin cannot open another club's sessions", async ({ sig
   // user does not administer, and the app redirects to /login.
   await page.goto("/club/judo/sessions");
   await expect(page).toHaveURL(/\/login$/);
+  // The judo sessions page never rendered.
+  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toHaveCount(0);
 });

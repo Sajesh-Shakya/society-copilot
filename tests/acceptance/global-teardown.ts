@@ -6,10 +6,14 @@ export default async function globalTeardown() {
   if (!raw) return;
   const context = JSON.parse(raw) as AcceptanceContext;
 
-  if (context.clubId) {
-    const { data: club, error } = await adminDb.from("club").select("id").eq("id", context.clubId).maybeSingle();
-    if (error) throw error;
-    if (club) await deleteClub(context.clubId);
+  try {
+    if (context.clubId) {
+      const { data: club, error } = await adminDb.from("club").select("id").eq("id", context.clubId).maybeSingle();
+      if (error) throw error;
+      if (club) await deleteClub(context.clubId);
+    }
+  } finally {
+    // Always attempt the auth-user delete, even if the club delete failed.
+    if (context.userId) await deleteAcceptanceUser(context.userId);
   }
-  if (context.userId) await deleteAcceptanceUser(context.userId, context.email);
 }

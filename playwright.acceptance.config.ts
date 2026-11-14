@@ -10,8 +10,10 @@ dotenv.config({ path: path.resolve(__dirname, '.env.local') });
  * admin created by global-setup and removed by global-teardown. Never part of
  * the default `playwright test` (see playwright.config.ts's testIgnore).
  *
- * Set ACCEPTANCE_BASE_URL to run against an already-running server; otherwise
- * `npm run dev` is started on port 3000.
+ * Set ACCEPTANCE_BASE_URL to explicitly run against an already-running
+ * server; otherwise `npm run dev` is started on the dedicated port 3100 and
+ * Playwright errors if that port is already taken (never reuse a server, which
+ * could be serving a different checkout's code).
  */
 const externalBaseUrl = process.env.ACCEPTANCE_BASE_URL;
 
@@ -29,9 +31,11 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: 'line',
   use: {
-    baseURL: externalBaseUrl ?? 'http://localhost:3000',
+    baseURL: externalBaseUrl ?? 'http://localhost:3100',
     navigationTimeout: 60_000,
-    trace: 'retain-on-failure',
+    // Off: a trace records locator.fill values, which would write the
+    // throwaway admin's password into a trace zip.
+    trace: 'off',
   },
   projects: [
     {
@@ -43,9 +47,9 @@ export default defineConfig({
     ? {}
     : {
         webServer: {
-          command: 'npm run dev',
-          url: 'http://localhost:3000',
-          reuseExistingServer: !process.env.CI,
+          command: 'npm run dev -- --port 3100',
+          url: 'http://localhost:3100',
+          reuseExistingServer: false,
           timeout: 120_000,
         },
       }),

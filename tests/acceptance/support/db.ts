@@ -70,10 +70,19 @@ export async function deleteClub(clubId: string): Promise<void> {
 
 const ACCEPTANCE_EMAIL = /^acceptance-.+@example\.test$/;
 
-/** Deletes an auth user, but only one whose email is an acceptance-*@example.test address. */
-export async function deleteAcceptanceUser(userId: string, email: string): Promise<void> {
-  if (!ACCEPTANCE_EMAIL.test(email)) {
-    throw new Error(`deleteAcceptanceUser: refusing to delete non-acceptance user "${email}"`);
+/**
+ * Deletes an auth user, but only one whose STORED email is an
+ * acceptance-*@example.test address (looked up by id, not trusted from the caller).
+ */
+export async function deleteAcceptanceUser(userId: string): Promise<void> {
+  const { data, error: getError } = await adminDb.auth.admin.getUserById(userId);
+  if (getError || !data?.user) {
+    if (!getError || /not found/i.test(getError.message)) return; // already gone
+    throw new Error(`deleteAcceptanceUser: ${getError.message}`);
+  }
+  const storedEmail = data.user.email ?? "";
+  if (!ACCEPTANCE_EMAIL.test(storedEmail)) {
+    throw new Error(`deleteAcceptanceUser: refusing to delete non-acceptance user "${storedEmail}"`);
   }
   const { error } = await adminDb.auth.admin.deleteUser(userId);
   if (error && !/not found/i.test(error.message)) {
@@ -92,11 +101,17 @@ export async function sweepStale(): Promise<void> {
   if (error) throw error;
   for (const club of clubs ?? []) await deleteClub(club.id);
 
-  const { data: users, error: usersError } = await adminDb.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  if (usersError) throw usersError;
-  for (const user of users.users) {
-    if (user.email && ACCEPTANCE_EMAIL.test(user.email) && user.created_at < cutoff) {
-      await deleteAcceptanceUser(user.id, user.email);
+  const cutoffMs = Date.parse(cutoff);
+  const stale: string[] = [];
+  for (let page = 1; ; page++) {
+    const { data: users, error: usersError } = await adminDb.auth.admin.listUsers({ page, perPage: 1000 });
+    if (usersError) throw usersError;
+    for (const user of users.users) {
+      if (user.email && ACCEPTANCE_EMAIL.test(user.email) && Date.parse(user.created_at) < cutoffMs) {
+        stale.push(user.id);
+      }
     }
+    if (users.users.length < 1000) break;
   }
+  for (const id of stale) await deleteAcceptanceUser(id);
 }
