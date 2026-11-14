@@ -371,20 +371,25 @@ identity — a per-club sender display name/domain hasn't been built.
     `lib/session-series/recurrence.ts`; `createRecurringSeries` + its
     server action). A signup CSV uploaded with the form applies to the
     first occurrence. The Upcoming list shows at most 3 occurrences per
-    series with a "+N more" link, so a long series does not bury one-off
-    sessions.
+    series; the rest sit in a collapsible "+N more in this series"
+    disclosure (a native `<details>`) listing the hidden occurrences, so a
+    long series does not bury one-off sessions but every week stays
+    reachable. Overnight events are not supported: the end must be later
+    the same day.
   - **Delete this and all later**: from an occurrence, a preview then
     confirm panel deletes that event and every later one in its series.
 - **Europe/London rule**: occurrences are computed as London wall-clock
   times, so a 18:00 class stays at 18:00 across a clock change (the UTC
   instant shifts). A start that lands inside the spring-forward gap
-  (01:00-02:00 on the last Sunday of March) shifts forward to the first
-  valid time. A series whose end would fall at or before its start on
+  (01:00-02:00 on the last Sunday of March) shifts forward by one hour
+  (01:30 becomes 02:30). A series whose end would fall at or before its start on
   that day (possible only around a clock change) is rejected with a
   message rather than created. A series is capped at 60 occurrences.
 - **Delete rule**: a session in the deleted range is kept iff it has any
   attended record (recorded attendance is never destroyed). Unattended
-  roster rows of deleted events are removed with them. The database
+  roster rows of deleted events are removed with them; after a mid-way
+  failure the unattended roster rows of the failing batch are already
+  gone (attended data is never lost). The database
   foreign key is the final backstop: if attendance appears between
   preview and confirm, the delete fails with an explanatory message
   instead of cascading.
@@ -393,8 +398,8 @@ identity — a per-club sender display name/domain hasn't been built.
   it must be applied to any other Supabase project before deploying this
   code.
 - **Tests (2026-11-14)**: unit 102 passed, integration 188 passed
-  (including `person-search`, which was flaky before this work because
-  the RPC orders ties arbitrarily), e2e 17 passed, lint 0 errors / 5
+  (the `person-search` ranking test is still flaky: the RPC orders ties
+  arbitrarily, so it can fail on a re-run), e2e 17 passed, lint 0 errors / 5
   pre-existing warnings, build OK.
 - **NOT VERIFIED**: the recurring form, the end-time inputs and the
   delete panel were never exercised in a signed-in browser (no signed-in
@@ -403,12 +408,13 @@ identity — a per-club sender display name/domain hasn't been built.
   1. Create a 3-week series that spans a clock change, with a signup CSV;
      check times stay at the same London wall-clock time and the CSV
      landed on the first occurrence.
-  2. Find it in Upcoming, confirm it shows 3 sessions and a "+N more" link
-     when the series is longer.
+  2. Find it in Upcoming, confirm it shows 3 sessions and a "+N more in this
+     series" disclosure that expands to the rest when the series is longer.
   3. Tick one attendee on a later occurrence first, then open an earlier
      occurrence, preview "delete this and later" and confirm; check the
      occurrence with attendance is kept and the rest are gone.
-  4. Set and clear an end time on a single session and via CSV import.
+  4. Set an end time when creating a single session and via CSV import
+     (there is no edit flow, so an end time cannot be changed afterwards).
 
 ## Known open items
 
