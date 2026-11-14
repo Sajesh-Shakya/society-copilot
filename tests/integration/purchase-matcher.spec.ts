@@ -1,8 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { randomUUID } from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { matchPersonRecord } from "@/lib/purchase/matcher";
-import type { RawPurchaseRow } from "@/lib/purchase/types";
+import { matchOrQueue } from "@/lib/purchase/matcher";
+import type { RawPurchaseRow, MatchResult } from "@/lib/purchase/types";
 
 const admin = createAdminClient();
 
@@ -12,6 +12,11 @@ test.beforeAll(async () => {
   if (error) throw error;
   judoClubId = data.id;
 });
+
+async function matchOne(r: RawPurchaseRow, clubId: string): Promise<MatchResult> {
+  const { matched } = await matchOrQueue([r], clubId);
+  return matched.get(r.externalId) ?? { matchStatus: "unmatched" };
+}
 
 function row(overrides: Partial<RawPurchaseRow> = {}): RawPurchaseRow {
   return {
@@ -25,7 +30,7 @@ function row(overrides: Partial<RawPurchaseRow> = {}): RawPurchaseRow {
   };
 }
 
-test.describe("matchPersonRecord", () => {
+test.describe("matchOrQueue", () => {
   let personIds: string[] = [];
 
   test.afterEach(async () => {
@@ -57,9 +62,9 @@ test.describe("matchPersonRecord", () => {
 
     // Simulates a Student ID column stored as a true Excel number, which
     // this test's caller (lib/xlsx/parser.ts) would normally have already
-    // normalized before this function ever sees it -- matchPersonRecord
+    // normalized before this function ever sees it -- the matcher
     // normalizes again anyway, as defense-in-depth for any other caller.
-    const result = await matchPersonRecord(
+    const result = await matchOne(
       row({ personCid: cid7, memberType: "Student", personName: "Matcher Test CID Person" }),
       judoClubId
     );
@@ -71,7 +76,7 @@ test.describe("matchPersonRecord", () => {
     const sharedName = `Matcher Test Nomatch ${randomUUID()}`;
     await createPerson({ fullName: sharedName }); // no CID recorded at all
 
-    const result = await matchPersonRecord(
+    const result = await matchOne(
       row({ personCid: "99999999", memberType: "Student", personName: sharedName }),
       judoClubId
     );
@@ -86,7 +91,7 @@ test.describe("matchPersonRecord", () => {
     const personId = await createPerson({ fullName: `Unique Name ${randomUUID()}` });
     const { data: person } = await admin.from("person").select("full_name").eq("id", personId).single();
 
-    const result = await matchPersonRecord(row({ personName: person!.full_name, memberType: "Public" }), judoClubId);
+    const result = await matchOne(row({ personName: person!.full_name, memberType: "Public" }), judoClubId);
 
     expect(result).toEqual({ personId, matchStatus: "name_matched" });
   });
@@ -96,7 +101,7 @@ test.describe("matchPersonRecord", () => {
     await createPerson({ fullName: sharedName });
     await createPerson({ fullName: sharedName });
 
-    const result = await matchPersonRecord(row({ personName: sharedName, memberType: "Public" }), judoClubId);
+    const result = await matchOne(row({ personName: sharedName, memberType: "Public" }), judoClubId);
 
     expect(result).toEqual({ matchStatus: "unmatched" });
   });
@@ -107,7 +112,7 @@ test.describe("matchPersonRecord", () => {
     const email = `matcher-specific-${randomUUID()}@example.test`;
     const personId = await createPerson({ fullName: sharedName, email });
 
-    const result = await matchPersonRecord(row({ personName: sharedName, personEmail: email, memberType: "Public" }), judoClubId);
+    const result = await matchOne(row({ personName: sharedName, personEmail: email, memberType: "Public" }), judoClubId);
 
     expect(result).toEqual({ personId, matchStatus: "email_matched" });
   });
@@ -123,7 +128,7 @@ test.describe("matchPersonRecord", () => {
     if (error) throw error;
     personIds.push(tkdPerson!.id);
 
-    const result = await matchPersonRecord(
+    const result = await matchOne(
       row({ personCid: sharedCid, memberType: "Student", personName: "Judo Buyer" }),
       judoClubId
     );

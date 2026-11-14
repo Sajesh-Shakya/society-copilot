@@ -1,7 +1,8 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { createClubScopedClient } from '@/lib/supabase/club-scoped';
 import { RawPurchaseRow, PurchaseRecord, IngestionResult, IngestionError, isStudentMemberType } from './types';
-import { matchOrQueue, matchPersonRecord } from './matcher';
+import { matchOrQueue } from './matcher';
+import { loadPersonIndex, matchAgainstIndex } from './person-index';
 import { z } from 'zod';
 
 // Minimal shape validation for an incoming row. purchasedAt arrives as a
@@ -398,6 +399,9 @@ export async function rematchUnmatchedPurchases(clubId: string): Promise<Rematch
   let matched = 0;
   let stillUnmatched = 0;
 
+  if ((typedUnmatched ?? []).length === 0) return { matched, stillUnmatched };
+  const index = await loadPersonIndex(clubId);
+
   for (const p of typedUnmatched ?? []) {
     const row: RawPurchaseRow = {
       externalId: p.id,
@@ -405,12 +409,12 @@ export async function rematchUnmatchedPurchases(clubId: string): Promise<Rematch
       personEmail: p.raw_email ?? undefined,
       personCid: p.raw_cid ?? undefined,
       memberType: p.raw_member_type ?? '',
-      productId: 'unused', // matchPersonRecord doesn't read product
+      productId: 'unused', // matching doesn't read product
       purchasedAt: new Date(p.purchased_at),
       source: 'xlsx_upload',
     };
 
-    const result = await matchPersonRecord(row, clubId);
+    const result = matchAgainstIndex(row, index);
     if (result.matchStatus === 'unmatched') {
       stillUnmatched++;
       continue;

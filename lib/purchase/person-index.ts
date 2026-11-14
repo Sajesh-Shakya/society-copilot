@@ -85,7 +85,7 @@ export async function loadPersonIndex(clubId: string): Promise<PersonIndex> {
   return buildPersonIndex(rows);
 }
 
-// Same rules as matchPersonRecord (lib/purchase/matcher.ts), against memory.
+// Matching rules (CID, student stop, email, unique name), evaluated in memory.
 export function matchAgainstIndex(row: RawPurchaseRow, index: PersonIndex): MatchResult {
   if (row.personCid) {
     const id = index.byCid.get(normalizeCid(row.personCid));
