@@ -321,8 +321,12 @@ identity — a per-club sender display name/domain hasn't been built.
   the CSV importer resolves people from one in-memory index and bulk-
   creates the missing ones. `next.config.ts` sets
   `experimental.serverActions.bodySizeLimit: "4mb"` (a 5,000-row export is
-  ~1.3 MB, over the 1 MB default; 4 MB stays under Vercel's 4.5 MB request
-  cap). The purchases page sets `maxDuration = 60`. Neither the uploader
+  ~1.3 MB, over the 1 MB default; 4 MB stays under Vercel's documented
+  ~4.5 MB function request limit, which is not verified in this repo).
+  The purchases page sets `maxDuration = 60`, a conservative value valid on
+  every plan; on a plan / Fluid Compute setup allowing longer it should be
+  raised. The project's actual plan/Fluid setting is NOT VERIFIED and is
+  for the user to check. Neither the uploader
   component nor `uploadXlsx` enforces its own file-size cap.
 - **Measurements** (dev Supabase project, run from this dev machine, so
   network latency differs from the deployed app; 5,000-row synthetic
@@ -337,11 +341,21 @@ identity — a per-club sender display name/domain hasn't been built.
 - **Remaining bottleneck**: the first-time run is dominated by per-
   purchase follow-ups for matched people (an `is_student` update and an
   `apply_purchase_waiver` RPC each, concurrency 5, ~47 ms per matched
-  purchase). A 5,000-row first-time upload exceeds `maxDuration = 60`
-  and would time out on Vercel; roughly 1,000 matched rows or fewer fit
+  purchase). A first-time upload of ~5,000 matched rows (~120 s measured
+  on dev) exceeds `maxDuration = 60` and would time out unless the plan
+  allows a longer duration; roughly 1,000 matched rows or fewer fit
   (extrapolated from the above, not measured). Batching the follow-ups
   (one set-based waiver call per upload) is the next step if exports
   that large are expected.
+- **Timeout behaviour**: follow-ups now run per chunk (200 rows), with one
+  person's purchases strictly sequential and different people in up to 5
+  lanes. A timed-out upload therefore loses at most the in-flight chunk's
+  waivers; those heal via the weekly chase sweep
+  (`reapply_waivers_for_everyone_with_debt` in
+  `app/api/cron/chase-emails/route.ts`) or the next attendance toggle.
+  `is_student` may be stale in that case (nothing reads it today). On the
+  XLSX path the `is_student` "latest purchase" only sees new rows, since already-ingested
+  rows are dropped before ingest (known edge, near-zero impact).
 - **NOT VERIFIED**: re-upload of the real sales export on the deployed
   app. This needs the user's real export and a preview deploy; the
   numbers above are synthetic and local.
