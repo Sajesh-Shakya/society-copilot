@@ -78,6 +78,37 @@ test.describe("matchAgainstIndex", () => {
   });
 });
 
+test.describe("duplicates mirror old maybeSingle() error path", () => {
+  const index = buildPersonIndex([
+    { id: "d1", cid: "11111111", email: "dup@x.com", full_name: "Dee One" },
+    { id: "d2", cid: "11111111", email: "DUP@x.com", full_name: "Dee Two" },
+    { id: "d3", cid: null, email: "dup@x.com", full_name: "Dee Three" },
+  ]);
+
+  test("duplicate email does not match; falls through to unique name", () => {
+    expect(matchAgainstIndex(row({ personEmail: "dup@x.com" }), index)).toEqual({
+      matchStatus: "unmatched",
+    });
+    expect(
+      matchAgainstIndex(row({ personEmail: "dup@x.com", personName: "Dee Three" }), index)
+    ).toEqual({ personId: "d3", matchStatus: "name_matched" });
+  });
+
+  test("duplicate CID does not match; non-student falls through to name", () => {
+    expect(matchAgainstIndex(row({ personCid: "11111111" }), index)).toEqual({
+      matchStatus: "unmatched",
+    });
+    expect(
+      matchAgainstIndex(row({ personCid: "11111111", personName: "Dee Two" }), index)
+    ).toEqual({ personId: "d2", matchStatus: "name_matched" });
+  });
+
+  test("duplicate CID for a student stops (Rule 2)", () => {
+    const r = row({ memberType: "Student", personCid: "11111111", personName: "Dee Two" });
+    expect(matchAgainstIndex(r, index)).toEqual({ matchStatus: "unmatched" });
+  });
+});
+
 test.describe("fetchAllPages", () => {
   test("pages until a short page", async () => {
     const all = Array.from({ length: 2500 }, (_, i) => i);

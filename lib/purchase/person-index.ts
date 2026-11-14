@@ -7,6 +7,10 @@ export interface PersonIndex {
   byEmail: Map<string, string>;
   byName: Map<string, string[]>;
   cidById: Map<string, string | null>;
+  // Keys shared by 2+ people. Removed from byCid/byEmail so they never match,
+  // mirroring the old maybeSingle() error path (error ignored -> no match).
+  ambiguousCids: Set<string>;
+  ambiguousEmails: Set<string>;
 }
 
 export interface PersonIndexRow {
@@ -16,20 +20,34 @@ export interface PersonIndexRow {
   full_name: string;
 }
 
+function addUnique(
+  map: Map<string, string>,
+  ambiguous: Set<string>,
+  key: string,
+  id: string
+): void {
+  if (ambiguous.has(key)) return;
+  if (map.has(key)) {
+    map.delete(key);
+    ambiguous.add(key);
+  } else {
+    map.set(key, id);
+  }
+}
+
 export function buildPersonIndex(people: PersonIndexRow[]): PersonIndex {
   const index: PersonIndex = {
     byCid: new Map(),
     byEmail: new Map(),
     byName: new Map(),
     cidById: new Map(),
+    ambiguousCids: new Set(),
+    ambiguousEmails: new Set(),
   };
   for (const p of people) {
     index.cidById.set(p.id, p.cid);
-    if (p.cid && !index.byCid.has(p.cid)) index.byCid.set(p.cid, p.id);
-    if (p.email) {
-      const key = p.email.toLowerCase();
-      if (!index.byEmail.has(key)) index.byEmail.set(key, p.id);
-    }
+    if (p.cid) addUnique(index.byCid, index.ambiguousCids, p.cid, p.id);
+    if (p.email) addUnique(index.byEmail, index.ambiguousEmails, p.email.toLowerCase(), p.id);
     const nameKey = p.full_name.trim().toLowerCase();
     if (nameKey) {
       const ids = index.byName.get(nameKey);
