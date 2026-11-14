@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { clubPath } from "@/lib/club-path";
@@ -59,6 +60,7 @@ export function SeriesDeletePanel({ sessionId, clubSlug }: { sessionId: string; 
         if (result.success) {
           // Stay locked (done) while navigating away; only failures unlock.
           setDone(true);
+          toast.success(result.message);
           router.push(clubPath(clubSlug, "/sessions"));
         } else {
           setError(result.message);
