@@ -321,8 +321,9 @@ identity — a per-club sender display name/domain hasn't been built.
   the CSV importer resolves people from one in-memory index and bulk-
   creates the missing ones. `next.config.ts` sets
   `experimental.serverActions.bodySizeLimit: "4mb"` (a 5,000-row export is
-  ~1.3 MB, over the 1 MB default; 4 MB stays under Vercel's documented
-  ~4.5 MB function request limit, which is not verified in this repo).
+  ~1.3 MB, over the 1 MB default; 4 MB is meant to stay under Vercel's
+  documented ~4.5 MB function request limit, which is not verified in
+  this repo).
   The purchases page sets `maxDuration = 60`, a conservative value valid on
   every plan; on a plan / Fluid Compute setup allowing longer it should be
   raised. The project's actual plan/Fluid setting is NOT VERIFIED and is
