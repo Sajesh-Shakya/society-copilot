@@ -397,17 +397,19 @@ identity — a per-club sender display name/domain hasn't been built.
   Additive and nullable. **Already applied to the dev Supabase project**;
   it must be applied to any other Supabase project before deploying this
   code.
-- **Tests (2026-11-14)**: unit 102 passed, integration 188 passed
+- **Tests (2026-11-14)**: unit 105 passed, integration 189 passed
   (the `person-search` ranking test is still flaky: the RPC orders ties
-  arbitrarily, so it can fail on a re-run), e2e 17 passed, lint 0 errors / 5
+  arbitrarily, so it can fail on a re-run), e2e 17 passed, acceptance 17
+  passed, lint 0 errors / 5
   pre-existing warnings, build OK.
 - **Signed-in browser coverage**: the recurring form, the delete panel and
   the sessions-list drop-downs are now exercised by the acceptance specs
   (see "Acceptance tests" below: `recurring-series.spec.ts`,
   `series-delete.spec.ts`, `sessions-list.spec.ts`). The one manual item the
-  specs do not cover: setting an end time when creating a single (non
-  recurring) session, and the visual layout / look of these screens on a
-  phone. Check those by hand.
+  specs do not cover: set an end time via single-session create AND via
+  CSV import (no acceptance spec covers the session CSV-import end time or
+  the single-session picker), and the visual layout / look of these screens
+  on a phone. Check those by hand.
 
 ## Acceptance tests
 
@@ -434,7 +436,14 @@ project (the dev project) with a throwaway club, admin and auth user.
   test, and deletes everything at the end. A run also sweeps stale
   throwaway clubs/users older than 1 hour left by crashed runs. Real clubs
   (judo, taekwondo) are never written to; the helpers refuse to touch a
-  club that is not a throwaway one.
+  club that is not a throwaway one. A run paused in `--ui`/`--debug` for
+  more than an hour can have its club and user swept by a newer run (the
+  1-hour stale rule).
+- **Do not run concurrently with the integration suite**: do not run the
+  acceptance suite and the integration suite at the same time.
+  `chase-generator.spec.ts` scans every club's debt cycles and can create
+  `chase_email` rows for throwaway people mid-teardown, breaking
+  `resetClubData` with an FK error or skewing counts.
 - **NOT VERIFIED (these specs do not and cannot show)**:
   - Vercel function region vs Supabase region (latency between them).
   - The plan's / Fluid Compute `maxDuration` limit (the purchases page sets
@@ -444,6 +453,10 @@ project (the dev project) with a throwaway club, admin and auth user.
 
 ## Known open items
 
+- **`npm run test:e2e` can run against a stale server**: `playwright.config.ts`
+  (the default e2e config) uses `reuseExistingServer` on :3000, so it can
+  silently test another checkout's server. Follow-up: give e2e its own port
+  like the acceptance config does.
 - **eActivities live sync**: down again as of 2026-11-13 (`whatson`/
   `events` endpoints), no ETA from the Union — see "Attendance tracking"
   above. CSV import is the working path in the meantime, for every club.
