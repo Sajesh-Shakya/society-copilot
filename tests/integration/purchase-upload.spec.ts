@@ -9,6 +9,8 @@ import {
   listRecentUploads,
 } from "@/lib/purchase/interface";
 import { findExistingSourceRowIds } from "@/lib/purchase/existing";
+import { planXlsxUpload } from "@/lib/xlsx/plan";
+import type { RawPurchaseRow } from "@/lib/purchase/types";
 
 const admin = createAdminClient();
 
@@ -281,6 +283,91 @@ test.describe("purchase upload batches", () => {
     expect((await findExistingSourceRowIds(judoClubId, "pluto_api", ids)).size).toBe(0);
 
     expect(await findExistingSourceRowIds(judoClubId, "xlsx_upload", [])).toEqual(new Set());
+  });
+
+  test("findExistingSourceRowIds does not return another club's rows", async () => {
+    personId = await createPerson();
+    await createProduct(1);
+    const { data: taekwondo, error: clubError } = await admin.from("club").select("id").eq("slug", "taekwondo").single();
+    if (clubError) throw clubError;
+    const sharedId = `existing-test-${randomUUID()}`;
+    const { data: tkdPerson, error: tkdPersonError } = await admin
+      .from("person")
+      .insert({ club_id: taekwondo!.id, email: `upload-test-${randomUUID()}@example.test`, full_name: "Upload Test Person" })
+      .select("id")
+      .single();
+    if (tkdPersonError) throw tkdPersonError;
+    const { data: tkdProduct, error: tkdProductError } = await admin
+      .from("product")
+      .insert({ club_id: taekwondo!.id, name: `Cross-Club Product ${randomUUID()}`, kind: "other" })
+      .select("id")
+      .single();
+    if (tkdProductError) throw tkdProductError;
+    productIds.push(tkdProduct!.id);
+    const { data: tkdPurchase, error: tkdPurchaseError } = await admin
+      .from("purchase")
+      .insert({
+        club_id: taekwondo!.id,
+        person_id: tkdPerson!.id,
+        product_id: tkdProduct!.id,
+        source: "xlsx_upload",
+        source_row_id: sharedId,
+        raw_person_name: "Upload Test Person",
+        match_status: "cid_matched",
+        purchased_at: "2026-02-01T00:00:00.000Z",
+      })
+      .select("id")
+      .single();
+    if (tkdPurchaseError) throw tkdPurchaseError;
+    purchaseIds.push(tkdPurchase!.id);
+    // person must be removed after purchase (afterEach order: purchase, product, then judo person)
+    try {
+      expect((await findExistingSourceRowIds(taekwondo!.id, "xlsx_upload", [sharedId])).has(sharedId)).toBe(true);
+      expect((await findExistingSourceRowIds(judoClubId, "xlsx_upload", [sharedId])).size).toBe(0);
+    } finally {
+      const { error: delPurchase } = await admin.from("purchase").delete().eq("id", tkdPurchase!.id);
+      if (delPurchase) throw new Error(`Cleanup failed: ${delPurchase.message}`);
+      purchaseIds = purchaseIds.filter((id) => id !== tkdPurchase!.id);
+      const { error: delPerson } = await admin.from("person").delete().eq("id", tkdPerson!.id);
+      if (delPerson) throw new Error(`Cleanup failed: ${delPerson.message}`);
+    }
+  });
+
+  test("planXlsxUpload splits already-ingested rows from new ones", async () => {
+    personId = await createPerson();
+    const product = await createProduct(1);
+    const uploadId = await createUpload(product);
+    const mkRow = (externalId: string): RawPurchaseRow =>
+      ({ externalId, personName: "Upload Test Person", memberType: "Student", productId: product, purchasedAt: "2026-02-01T00:00:00.000Z" }) as unknown as RawPurchaseRow;
+    const known = [0, 1].map(() => `plan-test-${randomUUID()}`);
+    for (const sourceRowId of known) {
+      const { data, error } = await admin
+        .from("purchase")
+        .insert({
+          club_id: judoClubId,
+          person_id: personId,
+          product_id: product,
+          upload_id: uploadId,
+          source: "xlsx_upload",
+          source_row_id: sourceRowId,
+          raw_person_name: "Upload Test Person",
+          match_status: "cid_matched",
+          purchased_at: "2026-02-01T00:00:00.000Z",
+        })
+        .select("id")
+        .single();
+      if (error || !data) throw new Error(`Failed to create test purchase: ${error?.message}`);
+      purchaseIds.push(data.id);
+    }
+    const sameRows = known.map(mkRow);
+    const rerun = await planXlsxUpload(sameRows, judoClubId);
+    expect(rerun.alreadyIngested).toBe(sameRows.length);
+    expect(rerun.newRows).toHaveLength(0);
+
+    const extras = [`plan-test-${randomUUID()}`, `plan-test-${randomUUID()}`];
+    const superset = await planXlsxUpload([...sameRows, ...extras.map(mkRow)], judoClubId);
+    expect(superset.alreadyIngested).toBe(2);
+    expect(superset.newRows.map((r) => r.externalId)).toEqual(extras);
   });
 
   test("a purchase_upload row has club_id stamped matching its product's club", async () => {

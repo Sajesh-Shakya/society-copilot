@@ -11,6 +11,7 @@ import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 import { parseXlsxFile } from "./parser";
 import { ingestPurchases } from "@/lib/purchase/interface";
 import { RawPurchaseRow } from "@/lib/purchase/types";
+import { planXlsxUpload } from "./plan";
 
 export interface UploadXlsxResult {
   success: boolean;
@@ -80,6 +81,28 @@ export async function uploadXlsx(clubSlug: string, formData: FormData): Promise<
     };
   }
 
+  // Drop rows already ingested before creating the batch, so a re-upload
+  // of the same file leaves no empty purchase_upload row behind. A failed
+  // lookup is reported as a failed upload -- never "treat everything as new".
+  let newRows: RawPurchaseRow[];
+  let alreadyIngested: number;
+  try {
+    ({ newRows, alreadyIngested } = await planXlsxUpload(rows, adminUser.clubId));
+  } catch (error) {
+    console.error("Failed to check for already-ingested rows:", error);
+    return {
+      success: false,
+      message: "Could not check for already-uploaded rows — nothing was ingested. Please try again.",
+    };
+  }
+
+  if (newRows.length === 0) {
+    return {
+      success: true,
+      message: `Parsed ${rows.length} rows. Nothing new — all ${rows.length} were already ingested.`,
+    };
+  }
+
   // One purchase_upload row per upload -- lets this batch later be
   // corrected (changeUploadProduct, if the wrong pass was picked above)
   // or undone (undoUpload, if the whole file was wrong) from the
@@ -89,7 +112,7 @@ export async function uploadXlsx(clubSlug: string, formData: FormData): Promise<
     .insert({
       product_id: typedProduct.id,
       filename: file.name,
-      row_count: rows.length,
+      row_count: newRows.length,
       uploaded_by: adminUser.email,
     })
     .select("id")
@@ -97,14 +120,15 @@ export async function uploadXlsx(clubSlug: string, formData: FormData): Promise<
   if (uploadError) throw uploadError;
 
   const result = await ingestPurchases(
-    rows.map((row) => ({ ...row, uploadId: upload.id })),
-    adminUser.clubId
+    newRows.map((row) => ({ ...row, uploadId: upload.id })),
+    adminUser.clubId,
+    { skipExistingCheck: true }
   );
 
   const skippedNote = skipped > 0 ? ` (${skipped} skipped as invalid)` : "";
 
   return {
     success: true,
-    message: `Parsed ${rows.length} rows${skippedNote}. Ingested ${result.inserted} new purchases (${result.duplicates} duplicates, ${result.errors.length} errors)`,
+    message: `Parsed ${rows.length} rows${skippedNote}. Ingested ${result.inserted} new purchases (${result.duplicates + alreadyIngested} duplicates, ${result.errors.length} errors)`,
   };
 }
