@@ -3,7 +3,12 @@
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { parseAttendeeCsv, isCsvFile } from "@/lib/csv-import/parser";
 import type { AttendeeRow } from "@/lib/csv-import/parser";
-import { createRecurringSeries, seriesTitleSchema } from "./create";
+import {
+  createRecurringSeries,
+  seriesCreateFailureMessage,
+  SeriesCleanupFailedError,
+  seriesTitleSchema,
+} from "./create";
 import { RecurrenceError, weeklyOccurrences } from "./recurrence";
 import { assertSessionBelongsToClub } from "@/lib/attendance/queries";
 import { executeSeriesDelete, planSeriesDelete, SeriesDeleteError } from "./delete";
@@ -74,7 +79,7 @@ export async function createRecurringSeriesAction(
     console.error("createRecurringSeriesAction: creation failed:", error);
     return {
       success: false,
-      message: "Creating the series failed — nothing was kept. Check the sessions list before retrying.",
+      message: seriesCreateFailureMessage(!(error instanceof SeriesCleanupFailedError)),
     };
   }
 }

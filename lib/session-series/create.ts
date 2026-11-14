@@ -79,23 +79,61 @@ export async function createRecurringSeries(
 
     return { seriesId, sessionIds, imported };
   } catch (error) {
-    await cleanupSeries(clubId, seriesId);
+    const cleaned = await cleanupSeries(clubId, seriesId);
+    if (!cleaned) throw new SeriesCleanupFailedError(error);
     throw error;
   }
 }
 
-/** Best effort: attendance records, then sessions, then the series row. Never throws. */
-async function cleanupSeries(clubId: string, seriesId: string): Promise<void> {
+/** Thrown instead of the original error when cleanup after a failed create did not complete. */
+export class SeriesCleanupFailedError extends Error {
+  constructor(readonly original: unknown) {
+    super("Creating the series failed and cleanup was incomplete.");
+    this.name = "SeriesCleanupFailedError";
+  }
+}
+
+/** User-facing text for a failed create. */
+export function seriesCreateFailureMessage(cleaned: boolean): string {
+  return cleaned
+    ? "Creating the series failed — nothing was kept. Check the sessions list before retrying."
+    : 'Creating the series failed and some sessions may remain — check the sessions list and use "Delete this and all later events" on the first one.';
+}
+
+/**
+ * Best effort: attendance records, then sessions, then the series row. Never
+ * throws; every error is logged. Returns true only if everything was removed.
+ * The series row is not touched if the session delete failed (it would just fail on the FK).
+ */
+async function cleanupSeries(clubId: string, seriesId: string): Promise<boolean> {
   try {
     const scoped = createClubScopedClient(clubId);
-    const { data: sessions } = await scoped.from("session").select("id").eq("series_id", seriesId);
+    const { data: sessions, error: selectError } = await scoped.from("session").select("id").eq("series_id", seriesId);
+    if (selectError) {
+      console.error("createRecurringSeries: cleanup could not list sessions:", selectError);
+      return false;
+    }
     const ids = ((sessions ?? []) as unknown as Array<{ id: string }>).map((s) => s.id);
     if (ids.length > 0) {
-      await scoped.from("attendance_record").delete().in("session_id", ids);
-      await scoped.from("session").delete().in("id", ids);
+      const { error: recordsError } = await scoped.from("attendance_record").delete().in("session_id", ids);
+      if (recordsError) {
+        console.error("createRecurringSeries: cleanup of attendance records failed:", recordsError);
+        return false;
+      }
+      const { error: sessionsError } = await scoped.from("session").delete().in("id", ids);
+      if (sessionsError) {
+        console.error("createRecurringSeries: cleanup of sessions failed:", sessionsError);
+        return false;
+      }
     }
-    await scoped.from("session_series").delete().eq("id", seriesId);
+    const { error: seriesError } = await scoped.from("session_series").delete().eq("id", seriesId);
+    if (seriesError) {
+      console.error("createRecurringSeries: cleanup of the series row failed:", seriesError);
+      return false;
+    }
+    return true;
   } catch (cleanupError) {
     console.error("createRecurringSeries: cleanup failed:", cleanupError);
+    return false;
   }
 }

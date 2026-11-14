@@ -166,8 +166,13 @@ test.describe("createRecurringSeries", () => {
     // sessions already exist.
     const title = newTitle();
     const junk = Array.from(crypto.getRandomValues(new Uint8Array(12000)), (b) => String.fromCharCode(35 + (b % 90))).join("");
+    const good = row();
     const bad = row({ email: `${junk}@example.test` });
-    await expect(createRecurringSeries({ ...crossing(title), rows: [row(), bad] }, judoClubId)).rejects.toBeTruthy(); // Supabase errors are plain objects, not Error instances
+    personEmails.push(good.email, bad.email);
+    // Supabase errors are plain objects, not Error instances
+    await expect(createRecurringSeries({ ...crossing(title), rows: [good, bad] }, judoClubId)).rejects.toMatchObject({
+      code: "54000",
+    });
 
     const { count: sessionCount } = await admin
       .from("session")
