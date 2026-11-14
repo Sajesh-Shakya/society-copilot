@@ -27,6 +27,7 @@ import { fuzzyMatches } from "@/lib/attendance/fuzzy-match";
 import { formatSessionTimes } from "@/lib/attendance/end-time";
 import type { AttendanceRow, SessionWithAttendance } from "@/lib/attendance/queries";
 import { AddAttendee } from "@/components/attendance/add-attendee";
+import { SeriesDeletePanel } from "@/components/attendance/series-delete-panel";
 import { SyncCsvButton } from "@/components/attendance/sync-csv-button";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 
@@ -261,6 +262,12 @@ export function AttendanceScreen({
         />
         <SyncCsvButton sessionId={session.id} clubSlug={clubSlug} onSynced={refetchRows} />
       </div>
+
+      {session.seriesId && (
+        <div className="flex flex-col items-start gap-2 border-t pt-4">
+          <SeriesDeletePanel sessionId={session.id} clubSlug={clubSlug} />
+        </div>
+      )}
     </div>
   );
 }
