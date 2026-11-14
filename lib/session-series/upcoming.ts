@@ -1,14 +1,14 @@
 /**
  * Keeps the Upcoming list quiet: every non-series session is kept, and at most
  * `perSeries` sessions of each series (the first ones in input order). Input
- * order is preserved; the dropped sessions are counted per series.
+ * order is preserved; the dropped sessions are returned per series, in input order.
  */
 export function limitUpcomingPerSeries<T extends { id: string; seriesId: string | null }>(
   sessions: T[],
   perSeries: number
-): { shown: T[]; hiddenCountBySeries: Map<string, number> } {
+): { shown: T[]; hiddenBySeries: Map<string, T[]> } {
   const keptCount = new Map<string, number>();
-  const hiddenCountBySeries = new Map<string, number>();
+  const hiddenBySeries = new Map<string, T[]>();
   const shown: T[] = [];
 
   for (const session of sessions) {
@@ -21,12 +21,11 @@ export function limitUpcomingPerSeries<T extends { id: string; seriesId: string 
       keptCount.set(session.seriesId, kept + 1);
       shown.push(session);
     } else {
-      hiddenCountBySeries.set(
-        session.seriesId,
-        (hiddenCountBySeries.get(session.seriesId) ?? 0) + 1
-      );
+      const hidden = hiddenBySeries.get(session.seriesId);
+      if (hidden) hidden.push(session);
+      else hiddenBySeries.set(session.seriesId, [session]);
     }
   }
 
-  return { shown, hiddenCountBySeries };
+  return { shown, hiddenBySeries };
 }

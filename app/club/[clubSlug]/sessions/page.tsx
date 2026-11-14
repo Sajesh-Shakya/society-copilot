@@ -34,7 +34,7 @@ export default async function SessionsIndexPage({
   // `sessions` is newest-starting-first overall; for "what's coming up"
   // the soonest session should lead, so this one group is reversed.
   const upcomingSessions = sessions.filter((s) => !s.isToday && s.isFuture).reverse();
-  const { shown: shownUpcoming, hiddenCountBySeries } = limitUpcomingPerSeries(upcomingSessions, 3);
+  const { shown: shownUpcoming, hiddenBySeries } = limitUpcomingPerSeries(upcomingSessions, 3);
   const pastSessions = sessions.filter((s) => !s.isToday && !s.isFuture);
 
   return (
@@ -90,7 +90,7 @@ export default async function SessionsIndexPage({
           <h2 className="text-sm font-semibold text-muted-foreground">Upcoming</h2>
           <div className="mt-2 flex flex-col gap-2">
             {shownUpcoming.map((s, i) => {
-              const hidden = s.seriesId ? hiddenCountBySeries.get(s.seriesId) : undefined;
+              const hidden = s.seriesId ? hiddenBySeries.get(s.seriesId) : undefined;
               const isLastShownOfSeries =
                 !!s.seriesId &&
                 !shownUpcoming.slice(i + 1).some((later) => later.seriesId === s.seriesId);
@@ -98,9 +98,16 @@ export default async function SessionsIndexPage({
                 <div key={s.id} className="flex flex-col gap-1">
                   <SessionRow session={s} clubSlug={clubSlug} />
                   {hidden && isLastShownOfSeries && (
-                    <p className="px-1 text-xs text-muted-foreground">
-                      +{hidden} more in this series
-                    </p>
+                    <details className="group">
+                      <summary className="cursor-pointer px-1 text-xs text-muted-foreground">
+                        +{hidden.length} more in this series
+                      </summary>
+                      <div className="mt-2 flex flex-col gap-2">
+                        {hidden.map((h) => (
+                          <SessionRow key={h.id} session={h} clubSlug={clubSlug} />
+                        ))}
+                      </div>
+                    </details>
                   )}
                 </div>
               );

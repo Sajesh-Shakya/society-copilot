@@ -16,10 +16,10 @@ test.describe("limitUpcomingPerSeries", () => {
   ];
 
   test("keeps 3 of a 6-session series plus both non-series sessions", () => {
-    const { shown, hiddenCountBySeries } = limitUpcomingPerSeries(input, 3);
+    const { shown, hiddenBySeries } = limitUpcomingPerSeries(input, 3);
     expect(shown.map((x) => x.id)).toEqual(["a1", "x1", "a2", "a3", "x2"]);
-    expect(hiddenCountBySeries.get("A")).toBe(3);
-    expect(hiddenCountBySeries.size).toBe(1);
+    expect(hiddenBySeries.get("A")!.map((x) => x.id)).toEqual(["a4", "a5", "a6"]);
+    expect(hiddenBySeries.size).toBe(1);
   });
 
   test("preserves input order", () => {
@@ -29,9 +29,9 @@ test.describe("limitUpcomingPerSeries", () => {
 
   test("leaves a series with 2 sessions untouched", () => {
     const two = [s("b1", "B"), s("b2", "B")];
-    const { shown, hiddenCountBySeries } = limitUpcomingPerSeries(two, 3);
+    const { shown, hiddenBySeries } = limitUpcomingPerSeries(two, 3);
     expect(shown).toEqual(two);
-    expect(hiddenCountBySeries.size).toBe(0);
+    expect(hiddenBySeries.size).toBe(0);
   });
 
   test("caps each series independently, not globally", () => {
@@ -43,15 +43,15 @@ test.describe("limitUpcomingPerSeries", () => {
       s("a3", "A"),
       s("b3", "B"),
     ];
-    const { shown, hiddenCountBySeries } = limitUpcomingPerSeries(two, 2);
+    const { shown, hiddenBySeries } = limitUpcomingPerSeries(two, 2);
     expect(shown.map((x) => x.id)).toEqual(["a1", "b1", "a2", "b2"]);
-    expect(hiddenCountBySeries.get("A")).toBe(1);
-    expect(hiddenCountBySeries.get("B")).toBe(1);
+    expect(hiddenBySeries.get("A")!.map((x) => x.id)).toEqual(["a3"]);
+    expect(hiddenBySeries.get("B")!.map((x) => x.id)).toEqual(["b3"]);
   });
 
   test("perSeries 0 hides all series members but never non-series sessions", () => {
-    const { shown, hiddenCountBySeries } = limitUpcomingPerSeries(input, 0);
+    const { shown, hiddenBySeries } = limitUpcomingPerSeries(input, 0);
     expect(shown.map((x) => x.id)).toEqual(["x1", "x2"]);
-    expect(hiddenCountBySeries.get("A")).toBe(6);
+    expect(hiddenBySeries.get("A")!.map((x) => x.id)).toEqual(["a1", "a2", "a3", "a4", "a5", "a6"]);
   });
 });
