@@ -18,7 +18,10 @@ async function openList(page: Page) {
 /** A session row link that is NOT inside any <details>. */
 const outside = (page: Page, title: string) =>
   page.locator("xpath=//a[not(ancestor::details)]").filter({ hasText: title });
-const insideAnyDetails = (page: Page, title: string) =>
+/** All outside-details row links whose text contains `prefix`, in DOM order. */
+const titlesOutside = (page: Page, prefix: string) =>
+  page.locator("xpath=//a[not(ancestor::details)]").filter({ hasText: prefix });
+const insideAnyDetails =(page: Page, title: string) =>
   page.locator("details a").filter({ hasText: title });
 
 test("(a) 7 upcoming sessions: 3 shown, 4 folded in 'Show 4 more upcoming'", async ({ signedIn: page }) => {
@@ -42,6 +45,10 @@ test("(a) 7 upcoming sessions: 3 shown, 4 folded in 'Show 4 more upcoming'", asy
 
   await more.locator("summary").click();
   for (const i of [4, 5, 6, 7]) await expect(more.getByRole("link").filter({ hasText: `Up ${i}` })).toBeVisible();
+
+  // Order: shown rows then folded rows both read soonest-first.
+  await expect(titlesOutside(page, "Up ")).toHaveText([/Up 1/, /Up 2/, /Up 3/]);
+  await expect(more.getByRole("link")).toHaveText([/Up 4/, /Up 5/, /Up 6/, /Up 7/]);
 });
 
 test("(b) 6 past sessions: 3 newest shown, 3 folded in 'Show 3 earlier'", async ({ signedIn: page }) => {
@@ -63,6 +70,10 @@ test("(b) 6 past sessions: 3 newest shown, 3 folded in 'Show 3 earlier'", async 
   await expect(more.locator("a").filter({ hasText: "Past 4" })).toBeHidden();
   await more.locator("summary").click();
   for (const i of [4, 5, 6]) await expect(more.getByRole("link").filter({ hasText: `Past ${i}` })).toBeVisible();
+
+  // Order: newest first, shown rows then folded rows.
+  await expect(titlesOutside(page, "Past ")).toHaveText([/Past 1/, /Past 2/, /Past 3/]);
+  await expect(more.getByRole("link")).toHaveText([/Past 4/, /Past 5/, /Past 6/]);
 });
 
 test("(c) with only 2 upcoming sessions there is no upcoming drop-down", async ({ signedIn: page }) => {
@@ -72,6 +83,7 @@ test("(c) with only 2 upcoming sessions there is no upcoming drop-down", async (
 
   await expect(outside(page, "Up 1")).toBeVisible();
   await expect(outside(page, "Up 2")).toBeVisible();
+  await expect(titlesOutside(page, "Up ")).toHaveText([/Up 1/, /Up 2/]);
   await expect(page.locator('[data-testid="upcoming-more"]')).toHaveCount(0);
   await expect(page.locator("details")).toHaveCount(0);
 });

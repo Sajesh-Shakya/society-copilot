@@ -77,7 +77,8 @@ test("(a) a weekly 19:00-20:30 series with a signup CSV is stored correctly acro
   await expect(page).toHaveURL(new RegExp(`/sessions/${sessions[0].id}$`));
   await expect(page.getByRole("heading", { name: title })).toBeVisible();
   for (const name of ["Alice Anderson", "Bruno Baptiste", "Chloe Campbell"]) {
-    await expect(page.getByText(name)).toBeVisible();
+    // .first(): the name may also appear elsewhere (e.g. next to an email); avoid strict-mode errors.
+    await expect(page.getByText(name).first()).toBeVisible();
   }
 
   // The second session has none.

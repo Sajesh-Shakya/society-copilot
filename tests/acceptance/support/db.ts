@@ -35,6 +35,8 @@ export async function assertThrowawayClub(clubId: string): Promise<void> {
 }
 
 // FK-dependency order: children before parents.
+// Any NEW club-scoped table MUST be added here, or club deletion (and the
+// stale sweep, which then throws on every run) will fail on its FK.
 const DATA_TABLES_IN_DELETE_ORDER = [
   "chase_email",
   "attendance_record",

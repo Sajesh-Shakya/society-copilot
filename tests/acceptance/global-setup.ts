@@ -6,6 +6,9 @@ import { adminDb, randomHex, sweepStale, type AcceptanceContext } from "./suppor
  * var. The password lives only in that env var; it is never written to disk or logged.
  */
 export default async function globalSetup() {
+  // A stale value inherited from the shell must never reach globalTeardown if
+  // this setup throws before publishing its own context.
+  delete process.env.ACCEPTANCE_CONTEXT;
   await sweepStale();
 
   const suffix = randomHex(4);
