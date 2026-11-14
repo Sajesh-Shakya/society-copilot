@@ -8,6 +8,7 @@ import {
   undoUpload,
   listRecentUploads,
 } from "@/lib/purchase/interface";
+import { findExistingSourceRowIds } from "@/lib/purchase/existing";
 
 const admin = createAdminClient();
 
@@ -242,6 +243,44 @@ test.describe("purchase upload batches", () => {
     productIds.push(tkdProduct!.id);
 
     await expect(changeUploadProduct(judoClubId, uploadId, tkdProduct!.id)).rejects.toThrow();
+  });
+
+  test("findExistingSourceRowIds returns only ids already in purchase, across chunks", async () => {
+    personId = await createPerson();
+    const product = await createProduct(1);
+    const uploadId = await createUpload(product);
+    const known = [0, 1, 2].map(() => `existing-test-${randomUUID()}`);
+    for (const sourceRowId of known) {
+      const { data, error } = await admin
+        .from("purchase")
+        .insert({
+          club_id: judoClubId,
+          person_id: personId,
+          product_id: product,
+          upload_id: uploadId,
+          source: "xlsx_upload",
+          source_row_id: sourceRowId,
+          raw_person_name: "Upload Test Person",
+          match_status: "cid_matched",
+          purchased_at: "2026-02-01T00:00:00.000Z",
+        })
+        .select("id")
+        .single();
+      if (error || !data) throw new Error(`Failed to create test purchase: ${error?.message}`);
+      purchaseIds.push(data.id);
+    }
+    const unknown = [`existing-test-${randomUUID()}`, `existing-test-${randomUUID()}`];
+    const filler = Array.from({ length: 250 }, () => `existing-test-${randomUUID()}`);
+    // Known ids deliberately straddle chunk boundaries (100 per chunk).
+    const ids = [known[0], ...filler.slice(0, 120), unknown[0], known[1], ...filler.slice(120), known[2], unknown[1]];
+
+    const found = await findExistingSourceRowIds(judoClubId, "xlsx_upload", ids);
+    expect(found).toEqual(new Set(known));
+
+    // Source filter: same ids under the other source are not found.
+    expect((await findExistingSourceRowIds(judoClubId, "pluto_api", ids)).size).toBe(0);
+
+    expect(await findExistingSourceRowIds(judoClubId, "xlsx_upload", [])).toEqual(new Set());
   });
 
   test("a purchase_upload row has club_id stamped matching its product's club", async () => {
