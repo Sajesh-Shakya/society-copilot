@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { randomUUID } from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getOutstandingDebt } from "@/lib/debt/calculator";
-import { ingestPurchases, rematchUnmatchedPurchases } from "@/lib/purchase/interface";
+import { ingestPurchases, rematchUnmatchedPurchases, undoUpload } from "@/lib/purchase/interface";
 import type { RawPurchaseRow } from "@/lib/purchase/types";
 
 const admin = createAdminClient();
@@ -188,6 +188,120 @@ test.describe("ingestPurchases", () => {
     expect(second.duplicates).toBe(1);
     expect(second.errors).toHaveLength(0);
     expect(await getOutstandingDebt(personId)).toBe(0); // unchanged, not re-waived incorrectly
+  });
+
+  async function createProduct(): Promise<string> {
+    const { data, error } = await admin
+      .from("product")
+      .insert({ club_id: judoClubId, name: `Test Chunk Product ${randomUUID()}`, kind: "other" })
+      .select("id")
+      .single();
+    if (error || !data) throw new Error(`Failed to create test product: ${error?.message}`);
+    productId = data.id;
+    return data.id;
+  }
+
+  function makeRows(n: number, pid: string, extra: Partial<RawPurchaseRow> = {}): RawPurchaseRow[] {
+    return Array.from({ length: n }, (_, i) => ({
+      externalId: `ingest-chunk-${randomUUID()}-${i}`,
+      personName: `Chunk Buyer ${i}`,
+      memberType: "Public",
+      productId: pid,
+      purchasedAt: new Date("2026-02-01T00:00:00.000Z"),
+      source: "xlsx_upload" as const,
+      ...extra,
+    }));
+  }
+
+  test("re-ingesting a mix of old and new rows", async () => {
+    const pid = await createProduct();
+    const oldRows = makeRows(3, pid);
+    const first = await ingestPurchases(oldRows, judoClubId);
+    expect(first).toEqual({ inserted: 3, duplicates: 0, errors: [] });
+
+    const second = await ingestPurchases([...oldRows, ...makeRows(2, pid)], judoClubId);
+    expect(second).toEqual({ inserted: 2, duplicates: 3, errors: [] });
+  });
+
+  test("duplicates do not re-trigger is_student or waivers", async () => {
+    const pid = await createProduct();
+    const email = `ingest-test-${randomUUID()}@example.test`;
+    personId = await createPerson(email);
+    const rows = makeRows(1, pid, { personEmail: email, personName: "Ingest Test Person", memberType: "Student" });
+
+    expect((await ingestPurchases(rows, judoClubId)).inserted).toBe(1);
+
+    const { error } = await admin.from("person").update({ is_student: false }).eq("id", personId);
+    if (error) throw error;
+
+    const again = await ingestPurchases(rows, judoClubId);
+    expect(again).toEqual({ inserted: 0, duplicates: 1, errors: [] });
+
+    const { data: person } = await admin.from("person").select("is_student").eq("id", personId).single();
+    expect(person!.is_student).toBe(false);
+  });
+
+  test("a bad row in a chunk is isolated", async () => {
+    const pid = await createProduct();
+    const rows = makeRows(5, pid);
+    const bad: RawPurchaseRow = { ...makeRows(1, pid)[0], productId: randomUUID() };
+    const result = await ingestPurchases([rows[0], rows[1], bad, rows[2], rows[3], rows[4]], judoClubId);
+
+    expect(result.inserted).toBe(5);
+    expect(result.duplicates).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].rowId).toBe(bad.externalId);
+  });
+
+  test("two rows with the same externalId in one batch insert once and count one duplicate", async () => {
+    const pid = await createProduct();
+    const [row] = makeRows(1, pid);
+    const result = await ingestPurchases([row, { ...row }], judoClubId);
+    expect(result).toEqual({ inserted: 1, duplicates: 1, errors: [] });
+  });
+
+  test("skipExistingCheck still counts conflicts as duplicates", async () => {
+    const pid = await createProduct();
+    const rows = makeRows(3, pid);
+    expect((await ingestPurchases(rows, judoClubId)).inserted).toBe(3);
+    const again = await ingestPurchases([...rows, ...makeRows(1, pid)], judoClubId, { skipExistingCheck: true });
+    expect(again).toEqual({ inserted: 1, duplicates: 3, errors: [] });
+  });
+
+  test("reingest after undoUpload inserts again", async () => {
+    const pid = await createProduct();
+    const { data: upload, error } = await admin
+      .from("purchase_upload")
+      .insert({ club_id: judoClubId, product_id: pid, filename: "chunk-test.xlsx", row_count: 4 })
+      .select("id")
+      .single();
+    if (error || !upload) throw new Error(`Failed to create upload: ${error?.message}`);
+
+    const rows = makeRows(4, pid, { uploadId: upload.id });
+    try {
+      expect((await ingestPurchases(rows, judoClubId)).inserted).toBe(4);
+      expect((await undoUpload(judoClubId, upload.id)).deletedPurchases).toBe(4);
+
+      const { data: upload2, error: e2 } = await admin
+        .from("purchase_upload")
+        .insert({ club_id: judoClubId, product_id: pid, filename: "chunk-test.xlsx", row_count: 4 })
+        .select("id")
+        .single();
+      if (e2 || !upload2) throw new Error(`Failed to create upload: ${e2?.message}`);
+      try {
+        const again = await ingestPurchases(
+          rows.map((r) => ({ ...r, uploadId: upload2.id })),
+          judoClubId
+        );
+        expect(again).toEqual({ inserted: 4, duplicates: 0, errors: [] });
+      } finally {
+        await admin.from("purchase").delete().eq("upload_id", upload2.id);
+        await admin.from("purchase_upload").delete().eq("id", upload2.id);
+      }
+    } finally {
+      await admin.from("purchase").delete().eq("upload_id", upload.id);
+      await admin.from("purchase_upload").delete().eq("id", upload.id);
+    }
   });
 
   test("a row with an explicit productId (the real XLSX-upload path) resolves directly, skipping by-name lookup", async () => {

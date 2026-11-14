@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { createClubScopedClient } from '@/lib/supabase/club-scoped';
 import { RawPurchaseRow, PurchaseRecord, IngestionResult, IngestionError, isStudentMemberType } from './types';
 import { matchOrQueue } from './matcher';
+import { findExistingSourceRowIds } from './existing';
 import { loadPersonIndex, matchAgainstIndex } from './person-index';
 import { z } from 'zod';
 
@@ -28,16 +29,53 @@ const rawPurchaseRowSchema = z
     message: 'either productId or productName is required',
   });
 
-export async function ingestPurchases(rows: RawPurchaseRow[], clubId: string): Promise<IngestionResult> {
+const INSERT_CHUNK_SIZE = 200;
+const FOLLOW_UP_CONCURRENCY = 5;
+
+async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const lanes = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      await worker(item);
+    }
+  });
+  await Promise.all(lanes);
+}
+
+export async function ingestPurchases(
+  allRows: RawPurchaseRow[],
+  clubId: string,
+  options: { skipExistingCheck?: boolean } = {}
+): Promise<IngestionResult> {
   const scoped = createClubScopedClient(clubId);
   const errors: IngestionError[] = [];
+  let duplicates = 0;
+  const rowKey = (source: string, externalId: string) => `${source}\u0000${externalId}`;
+  const rawRowByKey = new Map<string, RawPurchaseRow>();
+  for (const row of allRows) {
+    const key = rowKey(row.source, row.externalId);
+    if (!rawRowByKey.has(key)) rawRowByKey.set(key, row);
+  }
+  const rawRowFor = (source: string, externalId: string) => rawRowByKey.get(rowKey(source, externalId))!;
 
   // Step 1: Validate each row with Zod. Invalid rows are reported as errors
   // and excluded from every later step.
   const validRows: RawPurchaseRow[] = [];
-  for (const row of rows) {
+  const seenInBatch = new Set<string>();
+  for (const row of allRows) {
     const parsed = rawPurchaseRowSchema.safeParse(row);
     if (parsed.success) {
+      // A repeat of the same (source, externalId) inside one call is a
+      // duplicate. Dropping it here also keeps a chunked upsert from hitting
+      // Postgres' "ON CONFLICT DO UPDATE command cannot affect row a second
+      // time" error.
+      const key = rowKey(row.source, row.externalId);
+      if (seenInBatch.has(key)) {
+        duplicates++;
+        continue;
+      }
+      seenInBatch.add(key);
       validRows.push(row);
     } else {
       errors.push({
@@ -50,8 +88,27 @@ export async function ingestPurchases(rows: RawPurchaseRow[], clubId: string): P
     }
   }
 
-  if (validRows.length === 0) {
-    return { inserted: 0, duplicates: 0, errors };
+  // Step 1b: Drop rows already ingested (unless the caller knows the batch is
+  // fresh). Not caught on purpose: if this lookup fails, failing loudly beats
+  // silently re-ingesting everything.
+  let newRows = validRows;
+  if (!options.skipExistingCheck && validRows.length > 0) {
+    const idsBySource = new Map<RawPurchaseRow['source'], string[]>();
+    for (const row of validRows) {
+      const ids = idsBySource.get(row.source) ?? [];
+      ids.push(row.externalId);
+      idsBySource.set(row.source, ids);
+    }
+    const existingBySource = new Map<string, Set<string>>();
+    for (const [source, ids] of idsBySource) {
+      existingBySource.set(source, await findExistingSourceRowIds(clubId, source, ids));
+    }
+    newRows = validRows.filter((row) => !existingBySource.get(row.source)!.has(row.externalId));
+    duplicates += validRows.length - newRows.length;
+  }
+
+  if (newRows.length === 0) {
+    return { inserted: 0, duplicates, errors };
   }
 
   // Step 2: Match rows to people (or queue for manual review). matchOrQueue
@@ -60,7 +117,7 @@ export async function ingestPurchases(rows: RawPurchaseRow[], clubId: string): P
   // 'unmatched' default below.
   let matched: Map<string, import('./types').MatchResult>;
   try {
-    ({ matched } = await matchOrQueue(validRows, clubId));
+    ({ matched } = await matchOrQueue(newRows, clubId));
   } catch (error) {
     // A transport-level throw would otherwise abort the whole batch with no
     // partial result. Degrade to "nothing matched" — every row still gets
@@ -77,7 +134,7 @@ export async function ingestPurchases(rows: RawPurchaseRow[], clubId: string): P
   // exists yet for that name.
   const productMap = new Map<string, string>();
   const uniqueProductNames = [
-    ...new Set(validRows.filter((row) => !row.productId && row.productName).map((row) => row.productName!)),
+    ...new Set(newRows.filter((row) => !row.productId && row.productName).map((row) => row.productName!)),
   ];
 
   for (const productName of uniqueProductNames) {
@@ -124,7 +181,7 @@ export async function ingestPurchases(rows: RawPurchaseRow[], clubId: string): P
   // Step 4: Build purchase records, deriving is_student and match status.
   const purchases: (PurchaseRecord & { sourceRowId: string })[] = [];
 
-  for (const row of validRows) {
+  for (const row of newRows) {
     const productId = row.productId ?? productMap.get(row.productName!);
     if (!productId) {
       errors.push({
@@ -170,89 +227,139 @@ export async function ingestPurchases(rows: RawPurchaseRow[], clubId: string): P
     }
   }
 
-  // Step 5: Insert idempotently. UNIQUE(source, source_row_id) makes a
-  // repeat ingest (re-uploaded file, re-run poll) a duplicate, not an error.
-  // On a fresh (non-duplicate) insert for a matched row, also sync the
-  // derived is_student onto the person record -- design.md documents
-  // person.is_student as "derived from Member Type at last known
-  // purchase/signup". A duplicate does NOT re-trigger this, so re-running
-  // the same ingest has no additional side effects.
+  // Step 5: Insert in chunks, ignoring conflicts. UNIQUE(club_id, source,
+  // source_row_id) makes a repeat ingest a no-op: with ignoreDuplicates the
+  // upsert returns only the rows it actually inserted, so everything absent
+  // from the result is a duplicate (e.g. one inserted by a concurrent run
+  // after the existence check above).
+  //
+  // is_student sync and waivers run only for newly inserted rows, so
+  // re-running the same ingest has no additional side effects. design.md
+  // documents person.is_student as "derived from Member Type at last known
+  // purchase/signup".
+  type PurchaseWithRow = (typeof purchases)[number];
   let inserted = 0;
-  let duplicates = 0;
+  const insertedPurchases: { purchase: PurchaseWithRow; id: string }[] = [];
 
-  for (const purchase of purchases) {
-    try {
-      const { data: insertedPurchase, error } = await scoped
-        .from('purchase')
-        .insert({
-          person_id: purchase.personId,
-          product_id: purchase.productId,
-          upload_id: purchase.uploadId,
-          source: purchase.source,
-          source_row_id: purchase.sourceRowId,
-          raw_member_type: purchase.rawMemberType,
-          raw_person_name: purchase.rawPersonName,
-          raw_email: purchase.rawEmail,
-          raw_cid: purchase.rawCid,
-          match_status: purchase.matchStatus,
-          purchased_at: purchase.purchasedAt.toISOString(),
-        })
-        .select('id')
-        .single();
+  const toDbRow = (purchase: PurchaseWithRow) => ({
+    person_id: purchase.personId,
+    product_id: purchase.productId,
+    upload_id: purchase.uploadId,
+    source: purchase.source,
+    source_row_id: purchase.sourceRowId,
+    raw_member_type: purchase.rawMemberType,
+    raw_person_name: purchase.rawPersonName,
+    raw_email: purchase.rawEmail,
+    raw_cid: purchase.rawCid,
+    match_status: purchase.matchStatus,
+    purchased_at: purchase.purchasedAt.toISOString(),
+  });
 
-      if (error) {
-        if (error.code === '23505') {
-          // UNIQUE(source, source_row_id) violation -- already ingested.
-          duplicates++;
-        } else {
-          errors.push({
-            rowId: purchase.sourceRowId,
-            reason: error.message,
-            rawRow: rows.find((r) => r.externalId === purchase.sourceRowId)!,
-          });
-        }
-      } else {
-        inserted++;
-
-        if (purchase.personId && latestByPerson.get(purchase.personId) === purchase) {
-          const { error: updateError } = await scoped
-            .from('person')
-            .update({ is_student: purchase.isStudent })
-            .eq('id', purchase.personId);
-
-          if (updateError) {
+  // Fallback when a whole chunk errors: one row at a time, so only the
+  // offending rows end up in `errors`.
+  const insertOneByOne = async (chunk: PurchaseWithRow[]) => {
+    for (const purchase of chunk) {
+      try {
+        const { data, error } = await scoped.from('purchase').insert(toDbRow(purchase)).select('id').single();
+        if (error) {
+          if (error.code === '23505') {
+            duplicates++;
+          } else {
             errors.push({
               rowId: purchase.sourceRowId,
-              reason: `Purchase inserted, but failed to update person.is_student: ${updateError.message}`,
-              rawRow: rows.find((r) => r.externalId === purchase.sourceRowId)!,
+              reason: error.message,
+              rawRow: rawRowFor(purchase.source, purchase.sourceRowId),
             });
           }
+        } else if (data) {
+          inserted++;
+          insertedPurchases.push({ purchase, id: data.id });
         }
-
-        if (purchase.personId && insertedPurchase) {
-          try {
-            await applyWaivers(purchase.personId, insertedPurchase.id);
-          } catch (waiverError) {
-            errors.push({
-              rowId: purchase.sourceRowId,
-              reason: `Purchase inserted, but waiver assignment failed: ${
-                waiverError instanceof Error ? waiverError.message : 'unknown error'
-              }`,
-              rawRow: rows.find((r) => r.externalId === purchase.sourceRowId)!,
-            });
-          }
-        }
+      } catch (error) {
+        // A transport-level throw for this one row shouldn't abort every
+        // remaining row in the batch.
+        errors.push({
+          rowId: purchase.sourceRowId,
+          reason: error instanceof Error ? error.message : 'Unexpected error during insert',
+          rawRow: rawRowFor(purchase.source, purchase.sourceRowId),
+        });
       }
-    } catch (error) {
-      // A transport-level throw for this one row shouldn't abort every
-      // remaining row in the batch.
-      errors.push({
-        rowId: purchase.sourceRowId,
-        reason: error instanceof Error ? error.message : 'Unexpected error during insert',
-        rawRow: rows.find((r) => r.externalId === purchase.sourceRowId)!,
-      });
+    }
+  };
+
+  for (let i = 0; i < purchases.length; i += INSERT_CHUNK_SIZE) {
+    const chunk = purchases.slice(i, i + INSERT_CHUNK_SIZE);
+    let returned: { id: string; source: string; source_row_id: string }[] | null = null;
+    try {
+      const { data, error } = await scoped
+        .from('purchase')
+        .upsert(chunk.map(toDbRow), { onConflict: 'club_id,source,source_row_id', ignoreDuplicates: true })
+        .select('id, source, source_row_id');
+      if (!error) returned = (data ?? []) as unknown as { id: string; source: string; source_row_id: string }[];
+    } catch {
+      // fall through to the row-by-row retry
+    }
+
+    if (!returned) {
+      await insertOneByOne(chunk);
+      continue;
+    }
+
+    const idByKey = new Map(returned.map((r) => [rowKey(r.source, r.source_row_id), r.id]));
+    for (const purchase of chunk) {
+      const id = idByKey.get(rowKey(purchase.source, purchase.sourceRowId));
+      if (id) {
+        inserted++;
+        insertedPurchases.push({ purchase, id });
+      } else {
+        duplicates++;
+      }
     }
   }
+
+  // Follow-ups for newly inserted rows only. A person's is_student is set
+  // from their latest purchase in this batch, and only if that purchase was
+  // itself newly inserted.
+  await runWithConcurrency(insertedPurchases, FOLLOW_UP_CONCURRENCY, async ({ purchase, id }) => {
+    if (!purchase.personId) return;
+    const rawRow = rawRowFor(purchase.source, purchase.sourceRowId);
+
+    if (latestByPerson.get(purchase.personId) === purchase) {
+      try {
+        const { error: updateError } = await scoped
+          .from('person')
+          .update({ is_student: purchase.isStudent })
+          .eq('id', purchase.personId);
+        if (updateError) {
+          errors.push({
+            rowId: purchase.sourceRowId,
+            reason: `Purchase inserted, but failed to update person.is_student: ${updateError.message}`,
+            rawRow,
+          });
+        }
+      } catch (updateThrow) {
+        errors.push({
+          rowId: purchase.sourceRowId,
+          reason: `Purchase inserted, but failed to update person.is_student: ${
+            updateThrow instanceof Error ? updateThrow.message : 'unknown error'
+          }`,
+          rawRow,
+        });
+      }
+    }
+
+    try {
+      await applyWaivers(purchase.personId, id);
+    } catch (waiverError) {
+      errors.push({
+        rowId: purchase.sourceRowId,
+        reason: `Purchase inserted, but waiver assignment failed: ${
+          waiverError instanceof Error ? waiverError.message : 'unknown error'
+        }`,
+        rawRow,
+      });
+    }
+  });
 
   return { inserted, duplicates, errors };
 }
