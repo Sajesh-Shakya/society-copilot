@@ -361,6 +361,55 @@ identity — a per-club sender display name/domain hasn't been built.
   app. This needs the user's real export and a preview deploy; the
   numbers above are synthetic and local.
 
+## Recurring events (2026-11-14, recurring-events)
+
+- **What shipped**:
+  - **End time on sessions**: sessions have an optional end time, set on
+    every create flow (single create, CSV import, recurring).
+  - **Weekly recurring series**: a form at `/club/<slug>/sessions/recurring`
+    creates a weekly series (recurrence maths in
+    `lib/session-series/recurrence.ts`; `createRecurringSeries` + its
+    server action). A signup CSV uploaded with the form applies to the
+    first occurrence. The Upcoming list shows at most 3 occurrences per
+    series with a "+N more" link, so a long series does not bury one-off
+    sessions.
+  - **Delete this and all later**: from an occurrence, a preview then
+    confirm panel deletes that event and every later one in its series.
+- **Europe/London rule**: occurrences are computed as London wall-clock
+  times, so a 18:00 class stays at 18:00 across a clock change (the UTC
+  instant shifts). A start that lands inside the spring-forward gap
+  (01:00-02:00 on the last Sunday of March) shifts forward to the first
+  valid time. A series whose end would fall at or before its start on
+  that day (possible only around a clock change) is rejected with a
+  message rather than created. A series is capped at 60 occurrences.
+- **Delete rule**: a session in the deleted range is kept iff it has any
+  attended record (recorded attendance is never destroyed). Unattended
+  roster rows of deleted events are removed with them. The database
+  foreign key is the final backstop: if attendance appears between
+  preview and confirm, the delete fails with an explanatory message
+  instead of cascading.
+- **Migration**: `20261114090000_session_end_time_and_series.sql`.
+  Additive and nullable. **Already applied to the dev Supabase project**;
+  it must be applied to any other Supabase project before deploying this
+  code.
+- **Tests (2026-11-14)**: unit 102 passed, integration 188 passed
+  (including `person-search`, which was flaky before this work because
+  the RPC orders ties arbitrarily), e2e 17 passed, lint 0 errors / 5
+  pre-existing warnings, build OK.
+- **NOT VERIFIED**: the recurring form, the end-time inputs and the
+  delete panel were never exercised in a signed-in browser (no signed-in
+  e2e exists). Unit and integration tests cover the logic and DB layer
+  only. Manual checklist:
+  1. Create a 3-week series that spans a clock change, with a signup CSV;
+     check times stay at the same London wall-clock time and the CSV
+     landed on the first occurrence.
+  2. Find it in Upcoming, confirm it shows 3 sessions and a "+N more" link
+     when the series is longer.
+  3. Tick one attendee on a later occurrence first, then open an earlier
+     occurrence, preview "delete this and later" and confirm; check the
+     occurrence with attendance is kept and the rest are gone.
+  4. Set and clear an end time on a single session and via CSV import.
+
 ## Known open items
 
 - **eActivities live sync**: down again as of 2026-11-13 (`whatson`/
