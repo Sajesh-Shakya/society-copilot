@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 function Spinner({ className }: { className?: string }) {
   const { pending } = useLinkStatus();
   if (!pending) return null;
-  return <Loader2Icon aria-hidden className={cn("size-3.5 shrink-0 animate-spin", className)} />;
+  return <Loader2Icon aria-hidden data-testid="link-pending" className={cn("size-3.5 shrink-0 animate-spin", className)} />;
 }
 
 type LinkProps = React.ComponentProps<typeof Link>;

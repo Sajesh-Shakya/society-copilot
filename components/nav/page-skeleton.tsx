@@ -67,6 +67,7 @@ export function PageSkeleton({
   return (
     <div
       role="status"
+      data-testid="page-skeleton"
       className={cn("mx-auto px-4", maxWidth ?? WIDTH[variant], padding)}
     >
       <span className="sr-only">Loading…</span>
