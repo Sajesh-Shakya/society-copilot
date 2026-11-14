@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   importAttendanceCsv,
   syncAttendanceCsv,
+  resolvePeopleForRows,
   createSessionFromCsvSchema,
 } from "@/lib/csv-import/importer";
 import type { AttendeeRow } from "@/lib/csv-import/parser";
@@ -254,6 +255,121 @@ test.describe("importAttendanceCsv", () => {
     personIds.push(record!.person_id);
   });
 
+  test("two new rows with different emails but the same CID resolve to one new person", async () => {
+    // The DB's unique (person_id, session_id) on attendance_record means a
+    // file where two rows are the same person can't be imported in full (the
+    // old per-row code threw the same duplicate-key error), so this asserts
+    // at the resolution layer: one person created, both rows map to it.
+    const cid = String(Math.floor(10_000_000 + Math.random() * 80_000_000));
+    const ids = await resolvePeopleForRows(judoClubId, [
+      row({ rawCidOrCardNumber: cid }),
+      row({ rawCidOrCardNumber: cid }),
+    ]);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toBe(ids[1]);
+    personIds.push(ids[0]);
+
+    const { data: people } = await admin.from("person").select("id").eq("club_id", judoClubId).eq("cid", cid);
+    expect(people).toHaveLength(1);
+    expect(people![0].id).toBe(ids[0]);
+  });
+
+  test("imports 300 distinct rows (logs elapsed ms)", async () => {
+    const rows = Array.from({ length: 300 }, (_, i) =>
+      row({ rawCidOrCardNumber: i % 2 === 0 ? String(60_000_000 + Math.floor(Math.random() * 3_000_000)) : null })
+    );
+    // Random CIDs can collide in principle; make them unique.
+    const seen = new Set<string>();
+    for (const r of rows) {
+      while (r.rawCidOrCardNumber && seen.has(r.rawCidOrCardNumber)) {
+        r.rawCidOrCardNumber = String(60_000_000 + Math.floor(Math.random() * 3_000_000));
+      }
+      if (r.rawCidOrCardNumber) seen.add(r.rawCidOrCardNumber);
+    }
+    const started = Date.now();
+    const result = await importAttendanceCsv(
+      { title: "CSV Import 300 Test", startsAt: "2026-10-15T18:00:00.000Z", rows },
+      judoClubId
+    );
+    console.log(`[csv-import] 300-row import took ${Date.now() - started} ms`);
+    sessionIds.push(result.sessionId);
+    expect(result.imported).toBe(300);
+
+    const { data: records } = await admin
+      .from("attendance_record")
+      .select("person_id")
+      .eq("session_id", result.sessionId)
+      .limit(1000);
+    expect(records).toHaveLength(300);
+    expect(new Set(records!.map((r) => r.person_id)).size).toBe(300);
+    personIds.push(...records!.map((r) => r.person_id));
+  });
+
+  test("backfills a missing CID on an email-matched person, never overwrites an existing CID", async () => {
+    const noCidEmail = `csv-import-backfill-${crypto.randomUUID()}@example.test`;
+    const hasCidEmail = `csv-import-keepcid-${crypto.randomUUID()}@example.test`;
+    const newCid = String(Math.floor(10_000_000 + Math.random() * 40_000_000));
+    const keptCid = String(Math.floor(50_000_000 + Math.random() * 20_000_000));
+    const otherCid = String(Math.floor(70_000_000 + Math.random() * 20_000_000));
+    const { data: people, error } = await admin
+      .from("person")
+      .insert([
+        { club_id: judoClubId, full_name: "No Cid", email: noCidEmail },
+        { club_id: judoClubId, full_name: "Has Cid", email: hasCidEmail, cid: keptCid },
+      ])
+      .select("id, email");
+    if (error) throw error;
+    personIds.push(...people!.map((p) => p.id));
+    const noCid = people!.find((p) => p.email === noCidEmail)!;
+    const hasCid = people!.find((p) => p.email === hasCidEmail)!;
+
+    const result = await importAttendanceCsv(
+      {
+        title: "CSV Import Backfill Test",
+        startsAt: "2026-10-15T18:00:00.000Z",
+        rows: [
+          row({ email: noCidEmail, rawCidOrCardNumber: newCid }),
+          row({ email: hasCidEmail, rawCidOrCardNumber: otherCid }),
+        ],
+      },
+      judoClubId
+    );
+    sessionIds.push(result.sessionId);
+
+    const { data: after } = await admin.from("person").select("id, cid, email").in("id", [noCid.id, hasCid.id]);
+    expect(after!.find((p) => p.id === noCid.id)!.cid).toBe(newCid);
+    expect(after!.find((p) => p.id === hasCid.id)!.cid).toBe(keptCid);
+    expect(after!.find((p) => p.id === noCid.id)!.email).toBe(noCidEmail);
+  });
+
+  test("resolvePeopleForRows returns ids in row order, matching CID, then email, then creating", async () => {
+    const cidEmail = `csv-resolve-cid-${crypto.randomUUID()}@example.test`;
+    const emailOnly = `csv-resolve-email-${crypto.randomUUID()}@example.test`;
+    const cid = String(Math.floor(10_000_000 + Math.random() * 80_000_000));
+    const { data: people, error } = await admin
+      .from("person")
+      .insert([
+        { club_id: judoClubId, full_name: "By Cid", email: cidEmail, cid },
+        { club_id: judoClubId, full_name: "By Email", email: emailOnly },
+      ])
+      .select("id, email");
+    if (error) throw error;
+    personIds.push(...people!.map((p) => p.id));
+    const byCid = people!.find((p) => p.email === cidEmail)!.id;
+    const byEmail = people!.find((p) => p.email === emailOnly)!.id;
+
+    const ids = await resolvePeopleForRows(judoClubId, [
+      row({ rawCidOrCardNumber: cid }),
+      row({ email: emailOnly.toUpperCase() }),
+      row(),
+    ]);
+    expect(ids).toHaveLength(3);
+    expect(ids[0]).toBe(byCid);
+    expect(ids[1]).toBe(byEmail);
+    expect([byCid, byEmail]).not.toContain(ids[2]);
+    personIds.push(ids[2]);
+  });
+
   test("a duplicate email within the same file (bypassing the parser's guard) still throws a comprehensible DB error", async () => {
     const email = `csv-import-dup-${crypto.randomUUID()}@example.test`;
     // The real createSessionFromCsv action path now rejects a duplicate
@@ -295,6 +411,10 @@ test.describe("importAttendanceCsv", () => {
         .eq("session_id", s.id);
       for (const r of records ?? []) personIds.push(r.person_id);
     }
+    // The bulk path creates the person before the (rejected) attendance
+    // insert, so no record points at it; find it by email.
+    const { data: leftoverPeople } = await admin.from("person").select("id").ilike("email", email);
+    for (const p of leftoverPeople ?? []) personIds.push(p.id);
   });
 });
 

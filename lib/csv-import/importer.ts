@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { createClubScopedClient } from "@/lib/supabase/club-scoped";
-import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
+import { normalizeCid } from "@/lib/utils";
+import { loadPersonIndex } from "@/lib/purchase/person-index";
 import type { AttendeeRow } from "./parser";
 
 // Mirrors lib/attendance/actions.ts's createSessionFromSignup schema for
@@ -22,79 +23,121 @@ export interface ImportAttendanceCsvResult {
   imported: number;
 }
 
-type ScopedClient = ReturnType<typeof createClubScopedClient>;
-
 /**
- * Matches a CSV row to an existing person, creating one if none exists.
- * Shared by both the create-new-session and append-to-existing-session
- * import paths so they match/create people identically.
+ * Resolves every CSV row to a person id (returned in `rows` order) from one
+ * in-memory person index instead of per-row lookups. Shared by both the
+ * create-new-session and append-to-existing-session import paths so they
+ * match/create people identically.
  *
- * CID first, then email -- mirrors the priority lib/attendance/sync.ts's
- * findOrCreatePerson and lib/attendance/actions.ts's createWalkIn already
- * use. This USED to be email-only (per the 2026-10-09 design doc, written
- * when the CSV's CID/Card Number column was still considered too
- * unreliable to match on); that assumption was checked empirically on
- * 2026-10-16 and found to not hold -- it's reliably a clean 8-digit
- * Imperial CID once zero-padded. Email-only broke in production exactly
- * the way CID-only matching would never have: a real person (CID already
- * on file from an earlier import) signed up again under a different
- * email, email-only matching correctly found no existing person for that
- * email and tried to INSERT a new one, and person.cid's unique index
- * (person_cid_unique_idx, WHERE cid IS NOT NULL) rejected it outright --
- * aborting the whole import partway through, since this function's
- * caller writes no transaction boundary around the per-row loop.
+ * Matching rules are exactly those of the per-row function this replaced:
+ * CID first (normalised), then email (case-insensitive). The CID is a real
+ * 8-digit Imperial CID, and person_cid_unique_idx (WHERE cid IS NOT NULL)
+ * rejects two people sharing one, so a row signing up again under a
+ * different email must resolve to the existing CID owner, not insert.
  *
- * Also backfills person.cid when matched by email and the person doesn't
- * already have one -- for anyone created via CSV import before CID was
- * trusted enough to match on, which otherwise left purchase-record CID
- * matching (lib/purchase/matcher.ts) with nothing to match against.
- * Never overwrites an existing cid or email -- whichever key found the
- * match is trusted; the other field a row carries is additional evidence,
- * not grounds to silently rewrite someone's contact email or override a
- * previously-confirmed CID.
+ * When matched by email and the row carries a CID the person lacks, the CID
+ * is backfilled (one update per affected person). Never overwrites an
+ * existing cid or email -- whichever key found the match is trusted; the
+ * other field a row carries is additional evidence only.
+ *
+ * Rows that match nobody become new people (identity_confidence
+ * "confirmed") created in ONE bulk insert. Within the file, a later row whose
+ * CID or email equals an earlier would-be-new row maps to that same new
+ * person (the old code found the just-inserted person the same way).
  */
-async function findOrCreatePersonByEmail(scoped: ScopedClient, row: AttendeeRow): Promise<string> {
-  const email = row.email.toLowerCase();
-  const cid = row.rawCidOrCardNumber ? normalizeCid(row.rawCidOrCardNumber) : null;
+export async function resolvePeopleForRows(clubId: string, rows: AttendeeRow[]): Promise<string[]> {
+  const scoped = createClubScopedClient(clubId);
+  const index = await loadPersonIndex(clubId);
 
-  if (cid) {
-    const { data: byCid, error: cidLookupError } = await scoped
-      .from("person")
-      .select("id")
-      .eq("cid", cid)
-      .maybeSingle();
-    if (cidLookupError) throw cidLookupError;
-    if (byCid) return (byCid as unknown as { id: string }).id;
+  interface PendingPerson {
+    email: string;
+    fullName: string;
+    cid: string | null;
   }
+  const pending: PendingPerson[] = [];
+  const pendingByCid = new Map<string, number>();
+  const pendingByEmail = new Map<string, number>();
+  // Per row: either a resolved id or the index of a pending new person.
+  const resolved: Array<{ id: string } | { pendingIdx: number }> = [];
+  const backfills = new Map<string, string>(); // person id -> cid
 
-  const { data: byEmail, error: emailLookupError } = await scoped
-    .from("person")
-    .select("id, cid")
-    .ilike("email", escapeIlikePattern(email))
-    .maybeSingle();
-  if (emailLookupError) throw emailLookupError;
+  for (const row of rows) {
+    const email = row.email.toLowerCase();
+    const cid = row.rawCidOrCardNumber ? normalizeCid(row.rawCidOrCardNumber) : null;
 
-  if (byEmail) {
-    const typedByEmail = byEmail as unknown as { id: string; cid: string | null };
-    if (cid && !typedByEmail.cid) {
-      const { error: backfillError } = await scoped.from("person").update({ cid }).eq("id", typedByEmail.id);
-      if (backfillError) throw backfillError;
+    if (cid) {
+      const id = index.byCid.get(cid);
+      if (id) {
+        resolved.push({ id });
+        continue;
+      }
+      const pendingIdx = pendingByCid.get(cid);
+      if (pendingIdx !== undefined) {
+        resolved.push({ pendingIdx });
+        continue;
+      }
     }
-    return typedByEmail.id;
+
+    // The old per-row lookup used maybeSingle() and threw on its error, so
+    // an email shared by 2+ people fails the import rather than guessing.
+    if (index.ambiguousEmails.has(email)) {
+      throw new Error(`Multiple people share the email "${row.email}"; cannot match this row`);
+    }
+    const emailId = index.byEmail.get(email);
+    if (emailId) {
+      if (cid && !index.cidById.get(emailId)) {
+        backfills.set(emailId, cid);
+        index.cidById.set(emailId, cid);
+        index.byCid.set(cid, emailId);
+      }
+      resolved.push({ id: emailId });
+      continue;
+    }
+    const pendingEmailIdx = pendingByEmail.get(email);
+    if (pendingEmailIdx !== undefined) {
+      const p = pending[pendingEmailIdx];
+      if (cid && !p.cid) {
+        p.cid = cid;
+        pendingByCid.set(cid, pendingEmailIdx);
+      }
+      resolved.push({ pendingIdx: pendingEmailIdx });
+      continue;
+    }
+
+    const pendingIdx = pending.length;
+    pending.push({ email: row.email, fullName: `${row.firstName} ${row.surname}`.trim(), cid });
+    pendingByEmail.set(email, pendingIdx);
+    if (cid) pendingByCid.set(cid, pendingIdx);
+    resolved.push({ pendingIdx });
   }
 
-  const { data: created, error: personError } = await scoped
-    .from("person")
-    .insert({
-      email: row.email,
-      full_name: `${row.firstName} ${row.surname}`.trim(),
-      identity_confidence: "confirmed",
-      cid,
-    })
-    .select("id")
-    .single();
-  if (personError) throw personError;
-  return (created as unknown as { id: string }).id;
+  for (const [personId, cid] of backfills) {
+    const { error } = await scoped.from("person").update({ cid }).eq("id", personId);
+    if (error) throw error;
+  }
+
+  let createdIds: string[] = [];
+  if (pending.length > 0) {
+    const { data, error } = await scoped
+      .from("person")
+      .insert(
+        pending.map((p) => ({
+          email: p.email,
+          full_name: p.fullName,
+          identity_confidence: "confirmed",
+          cid: p.cid,
+        }))
+      )
+      .select("id, email, cid");
+    if (error) throw error;
+    // PostgREST returns inserted rows in input order.
+    createdIds = ((data ?? []) as unknown as Array<{ id: string }>).map((r) => r.id);
+    if (createdIds.length !== pending.length) {
+      throw new Error(`Expected ${pending.length} new people, database returned ${createdIds.length}`);
+    }
+  }
+
+  return resolved.map((r) => ("id" in r ? r.id : createdIds[r.pendingIdx]));
 }
 
 /**
@@ -131,16 +174,18 @@ export async function importAttendanceCsv(
   if (sessionError) throw sessionError;
   const typedSession = session as unknown as { id: string };
 
-  for (const row of input.rows) {
-    const personId = await findOrCreatePersonByEmail(scoped, row);
+  const personIds = await resolvePeopleForRows(clubId, input.rows);
 
-    const { error: attendanceError } = await scoped.from("attendance_record").insert({
-      person_id: personId,
+  const ATTENDANCE_CHUNK_SIZE = 500;
+  for (let start = 0; start < input.rows.length; start += ATTENDANCE_CHUNK_SIZE) {
+    const chunk = input.rows.slice(start, start + ATTENDANCE_CHUNK_SIZE).map((row, i) => ({
+      person_id: personIds[start + i],
       session_id: typedSession.id,
-      source: "csv_import",
+      source: "csv_import" as const,
       attended: false,
       raw_cid_or_card_number: row.rawCidOrCardNumber,
-    });
+    }));
+    const { error: attendanceError } = await scoped.from("attendance_record").insert(chunk);
     if (attendanceError) throw attendanceError;
   }
 
@@ -189,17 +234,14 @@ export async function syncAttendanceCsv(
 ): Promise<SyncAttendanceCsvResult> {
   const scoped = createClubScopedClient(clubId);
 
-  const records = [];
-  for (const row of input.rows) {
-    const personId = await findOrCreatePersonByEmail(scoped, row);
-    records.push({
-      person_id: personId,
-      session_id: input.sessionId,
-      source: "csv_import" as const,
-      attended: false,
-      raw_cid_or_card_number: row.rawCidOrCardNumber,
-    });
-  }
+  const personIds = await resolvePeopleForRows(clubId, input.rows);
+  const records = input.rows.map((row, i) => ({
+    person_id: personIds[i],
+    session_id: input.sessionId,
+    source: "csv_import" as const,
+    attended: false,
+    raw_cid_or_card_number: row.rawCidOrCardNumber,
+  }));
 
   const { data: upserted, error: upsertError } = await scoped
     .from("attendance_record")
