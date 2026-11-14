@@ -29,12 +29,14 @@ export function RecurringSessionForm({ clubSlug }: { clubSlug: string }) {
       if (result.success && result.firstSessionId) {
         toast.success(result.message);
         router.push(clubPath(clubSlug, `/sessions/${result.firstSessionId}`));
+        // Stay pending after success: the form remains locked while navigating,
+        // so a second click cannot create a duplicate series.
       } else {
         setError(result.message);
+        setIsPending(false);
       }
     } catch {
       setError("Creating the series failed unexpectedly.");
-    } finally {
       setIsPending(false);
     }
   }
@@ -71,6 +73,7 @@ export function RecurringSessionForm({ clubSlug }: { clubSlug: string }) {
           accept=".csv"
           label="Choose CSV file"
           disabled={isPending}
+          // FilePickerButton requires this prop; the file is read from the form on submit.
           onFileSelected={() => {}}
         />
       </div>

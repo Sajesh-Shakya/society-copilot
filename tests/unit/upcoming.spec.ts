@@ -34,6 +34,21 @@ test.describe("limitUpcomingPerSeries", () => {
     expect(hiddenCountBySeries.size).toBe(0);
   });
 
+  test("caps each series independently, not globally", () => {
+    const two = [
+      s("a1", "A"),
+      s("b1", "B"),
+      s("a2", "A"),
+      s("b2", "B"),
+      s("a3", "A"),
+      s("b3", "B"),
+    ];
+    const { shown, hiddenCountBySeries } = limitUpcomingPerSeries(two, 2);
+    expect(shown.map((x) => x.id)).toEqual(["a1", "b1", "a2", "b2"]);
+    expect(hiddenCountBySeries.get("A")).toBe(1);
+    expect(hiddenCountBySeries.get("B")).toBe(1);
+  });
+
   test("perSeries 0 hides all series members but never non-series sessions", () => {
     const { shown, hiddenCountBySeries } = limitUpcomingPerSeries(input, 0);
     expect(shown.map((x) => x.id)).toEqual(["x1", "x2"]);

@@ -35,7 +35,7 @@ export default async function SessionsIndexPage({
   // the soonest session should lead, so this one group is reversed.
   const upcomingSessions = sessions.filter((s) => !s.isToday && s.isFuture).reverse();
   const { shown: shownUpcoming, hiddenCountBySeries } = limitUpcomingPerSeries(upcomingSessions, 3);
-  const pastSessions =sessions.filter((s) => !s.isToday && !s.isFuture);
+  const pastSessions = sessions.filter((s) => !s.isToday && !s.isFuture);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6 sm:py-10">
