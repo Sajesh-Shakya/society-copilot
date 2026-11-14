@@ -125,10 +125,14 @@ export function weeklyOccurrences(input: {
   const out: { startsAt: Date; endsAt: Date }[] = [];
   for (let i = 0; i < count; i++) {
     const date = fmt(addDays(first, i * 7));
-    out.push({
-      startsAt: londonWallTimeToUtc(date, input.startTime),
-      endsAt: londonWallTimeToUtc(date, input.endTime),
-    });
+    const startsAt = londonWallTimeToUtc(date, input.startTime);
+    const endsAt = londonWallTimeToUtc(date, input.endTime);
+    if (endsAt.getTime() <= startsAt.getTime()) {
+      throw new RecurrenceError(
+        `On ${date} the clocks go forward and ${input.startTime}–${input.endTime} does not exist; choose a start or end time outside 01:00–02:00.`,
+      );
+    }
+    out.push({ startsAt, endsAt });
   }
   return out;
 }

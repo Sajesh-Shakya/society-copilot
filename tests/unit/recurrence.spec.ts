@@ -155,3 +155,52 @@ test.describe("londonWallTimeToUtc", () => {
     }
   });
 });
+
+test.describe("clock-change days", () => {
+  test("end before start across the spring gap is rejected, naming the date", () => {
+    for (const [startTime, endTime] of [
+      ["01:30", "02:15"],
+      ["01:59", "02:00"],
+    ]) {
+      let err: unknown;
+      try {
+        weeklyOccurrences({ firstDate: "2027-03-21", startTime, endTime, untilDate: "2027-03-28" });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(RecurrenceError);
+      expect((err as Error).message).toContain("2027-03-28");
+    }
+  });
+
+  test("valid cases on the change day still succeed", () => {
+    const [a] = weeklyOccurrences({
+      firstDate: "2027-03-28",
+      startTime: "00:30",
+      endTime: "01:30",
+      untilDate: "2027-03-28",
+    });
+    expect(a.endsAt.getTime()).toBeGreaterThan(a.startsAt.getTime());
+    const occ = weeklyOccurrences({
+      firstDate: "2027-03-22",
+      startTime: "19:00",
+      endTime: "20:30",
+      untilDate: "2027-03-29",
+    });
+    expect(occ.map((o) => iso(o.startsAt))).toEqual(["2027-03-22T19:00:00Z", "2027-03-29T18:00:00Z"]);
+    for (const o of occ) expect(o.endsAt.getTime() - o.startsAt.getTime()).toBe(90 * 60_000);
+  });
+
+  test("00:00 and 23:59 boundaries", () => {
+    expect(iso(londonWallTimeToUtc("2026-01-15", "00:00"))).toBe("2026-01-15T00:00:00Z");
+    expect(iso(londonWallTimeToUtc("2026-07-15", "00:00"))).toBe("2026-07-14T23:00:00Z");
+    expect(iso(londonWallTimeToUtc("2026-07-15", "23:59"))).toBe("2026-07-15T22:59:00Z");
+    const [o] = weeklyOccurrences({
+      firstDate: "2026-07-15",
+      startTime: "00:00",
+      endTime: "23:59",
+      untilDate: "2026-07-15",
+    });
+    expect(o.endsAt.getTime() - o.startsAt.getTime()).toBe((24 * 60 - 1) * 60_000);
+  });
+});
