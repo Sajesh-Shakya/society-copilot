@@ -278,6 +278,30 @@ test.describe("ingestPurchases", () => {
     expect(after!.is_student).toBe(false);
   });
 
+  test("two session passes for one person in the same call each waive a distinct outstanding attendance", async () => {
+    const email = `ingest-test-${randomUUID()}@example.test`;
+    personId = await createPerson(email);
+    await createAttendance(personId, "2026-01-01T18:00:00.000Z"); // free trial
+    await createAttendance(personId, "2026-01-08T18:00:00.000Z"); // debt #1
+    await createAttendance(personId, "2026-01-15T18:00:00.000Z"); // debt #2
+    expect(await getOutstandingDebt(personId)).toBe(2);
+
+    const { data: product, error } = await admin
+      .from("product")
+      .insert({ club_id: judoClubId, name: `Test Single Pass ${randomUUID()}`, kind: "session_pass", covers_sessions: 1 })
+      .select("id")
+      .single();
+    if (error || !product) throw new Error(`Failed to create test product: ${error?.message}`);
+    productId = product.id;
+
+    const rows = makeRows(2, product.id, { personEmail: email, personName: "Ingest Test Person" });
+    const result = await ingestPurchases(rows, judoClubId);
+    expect(result).toEqual({ inserted: 2, duplicates: 0, errors: [] });
+    // Concurrent apply_purchase_waiver calls for one person can both pick the
+    // same oldest outstanding row, leaving the second under-waived.
+    expect(await getOutstandingDebt(personId)).toBe(0);
+  });
+
   test("450 rows span multiple chunks; re-ingest is all duplicates", async () => {
     const pid = await createProduct();
     const rows = makeRows(450, pid);

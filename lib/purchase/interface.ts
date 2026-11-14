@@ -248,7 +248,7 @@ export async function ingestPurchases(
   // purchase/signup".
   type PurchaseWithRow = (typeof purchases)[number];
   let inserted = 0;
-  const insertedPurchases: { purchase: PurchaseWithRow; id: string }[] = [];
+  type InsertedPurchase = { purchase: PurchaseWithRow; id: string };
 
   const toDbRow = (purchase: PurchaseWithRow) => ({
     person_id: purchase.personId,
@@ -266,7 +266,7 @@ export async function ingestPurchases(
 
   // Fallback when a whole chunk errors: one row at a time, so only the
   // offending rows end up in `errors`.
-  const insertOneByOne = async (chunk: PurchaseWithRow[]) => {
+  const insertOneByOne = async (chunk: PurchaseWithRow[], sink: InsertedPurchase[]) => {
     for (const purchase of chunk) {
       try {
         const { data, error } = await scoped.from('purchase').insert(toDbRow(purchase)).select('id').single();
@@ -281,8 +281,7 @@ export async function ingestPurchases(
             });
           }
         } else if (data) {
-          inserted++;
-          insertedPurchases.push({ purchase, id: data.id });
+          sink.push({ purchase, id: data.id });
         }
       } catch (error) {
         // A transport-level throw for this one row shouldn't abort every
@@ -296,40 +295,10 @@ export async function ingestPurchases(
     }
   };
 
-  for (let i = 0; i < purchases.length; i += INSERT_CHUNK_SIZE) {
-    const chunk = purchases.slice(i, i + INSERT_CHUNK_SIZE);
-    let returned: { id: string; source: string; source_row_id: string }[] | null = null;
-    try {
-      const { data, error } = await scoped
-        .from('purchase')
-        .upsert(chunk.map(toDbRow), { onConflict: 'club_id,source,source_row_id', ignoreDuplicates: true })
-        .select('id, source, source_row_id');
-      if (!error) returned = (data ?? []) as unknown as { id: string; source: string; source_row_id: string }[];
-    } catch {
-      // fall through to the row-by-row retry
-    }
-
-    if (!returned) {
-      await insertOneByOne(chunk);
-      continue;
-    }
-
-    const idByKey = new Map(returned.map((r) => [rowKey(r.source, r.source_row_id), r.id]));
-    for (const purchase of chunk) {
-      const id = idByKey.get(rowKey(purchase.source, purchase.sourceRowId));
-      if (id) {
-        inserted++;
-        insertedPurchases.push({ purchase, id });
-      } else {
-        duplicates++;
-      }
-    }
-  }
-
   // Follow-ups for newly inserted rows only. A person's is_student is set
-  // from their latest purchase in this batch, and only if that purchase was
-  // itself newly inserted.
-  await runWithConcurrency(insertedPurchases, FOLLOW_UP_CONCURRENCY, async ({ purchase, id }) => {
+  // from their latest purchase over ALL validated rows (latestByPerson, built
+  // up front), and only if that purchase was itself newly inserted.
+  const runFollowUps = async ({ purchase, id }: InsertedPurchase) => {
     if (!purchase.personId) return;
     const rawRow = rawRowFor(purchase.source, purchase.sourceRowId);
 
@@ -368,7 +337,59 @@ export async function ingestPurchases(
         rawRow,
       });
     }
-  });
+  };
+
+  // Follow-ups run right after their own chunk, so a timeout loses at most the
+  // in-flight chunk's. One person's purchases run strictly in input order
+  // (apply_purchase_waiver races if two calls for the same person overlap);
+  // different people run up to FOLLOW_UP_CONCURRENCY lanes at once.
+  const runChunkFollowUps = async (chunkInserted: InsertedPurchase[]) => {
+    const byPerson = new Map<string, InsertedPurchase[]>();
+    for (const item of chunkInserted) {
+      if (!item.purchase.personId) continue;
+      const list = byPerson.get(item.purchase.personId) ?? [];
+      list.push(item);
+      byPerson.set(item.purchase.personId, list);
+    }
+    await runWithConcurrency([...byPerson.values()], FOLLOW_UP_CONCURRENCY, async (list) => {
+      for (const item of list) await runFollowUps(item);
+    });
+  };
+
+  for (let i = 0; i < purchases.length; i += INSERT_CHUNK_SIZE) {
+    const chunk = purchases.slice(i, i + INSERT_CHUNK_SIZE);
+    const chunkInserted: InsertedPurchase[] = [];
+    let returned: { id: string; source: string; source_row_id: string }[] | null = null;
+    try {
+      const { data, error } = await scoped
+        .from('purchase')
+        .upsert(chunk.map(toDbRow), { onConflict: 'club_id,source,source_row_id', ignoreDuplicates: true })
+        .select('id, source, source_row_id');
+      if (error) {
+        console.warn('purchase chunk upsert failed; retrying row-by-row', error.message);
+      } else {
+        returned = (data ?? []) as unknown as { id: string; source: string; source_row_id: string }[];
+      }
+    } catch (upsertThrow) {
+      console.warn(
+        'purchase chunk upsert failed; retrying row-by-row',
+        upsertThrow instanceof Error ? upsertThrow.message : upsertThrow
+      );
+    }
+
+    if (!returned) {
+      await insertOneByOne(chunk, chunkInserted);
+    } else {
+      const idByKey = new Map(returned.map((r) => [rowKey(r.source, r.source_row_id), r.id]));
+      for (const purchase of chunk) {
+        const id = idByKey.get(rowKey(purchase.source, purchase.sourceRowId));
+        if (id) chunkInserted.push({ purchase, id });
+        else duplicates++;
+      }
+    }
+    inserted += chunkInserted.length;
+    await runChunkFollowUps(chunkInserted);
+  }
 
   return { inserted, duplicates, errors };
 }
