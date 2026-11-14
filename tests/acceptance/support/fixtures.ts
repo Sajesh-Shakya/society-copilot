@@ -129,6 +129,10 @@ export async function seedPurchase(input: {
   personId?: string;
   purchasedAt?: Date | string;
   matchStatus?: "cid_matched" | "email_matched" | "manual_matched" | "unmatched";
+  rawPersonName?: string;
+  rawCid?: string;
+  rawEmail?: string;
+  rawMemberType?: string;
 }): Promise<string> {
   const at = input.purchasedAt ?? new Date();
   const { data, error } = await adminDb
@@ -141,6 +145,10 @@ export async function seedPurchase(input: {
       source_row_id: `e2e-${randomHex(6)}`,
       purchased_at: typeof at === "string" ? at : at.toISOString(),
       match_status: input.matchStatus ?? (input.personId ? "manual_matched" : "unmatched"),
+      raw_person_name: input.rawPersonName ?? null,
+      raw_cid: input.rawCid ?? null,
+      raw_email: input.rawEmail ?? null,
+      raw_member_type: input.rawMemberType ?? null,
     })
     .select("id")
     .single();

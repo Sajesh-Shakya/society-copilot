@@ -401,20 +401,46 @@ identity — a per-club sender display name/domain hasn't been built.
   (the `person-search` ranking test is still flaky: the RPC orders ties
   arbitrarily, so it can fail on a re-run), e2e 17 passed, lint 0 errors / 5
   pre-existing warnings, build OK.
-- **NOT VERIFIED**: the recurring form, the end-time inputs and the
-  delete panel were never exercised in a signed-in browser (no signed-in
-  e2e exists). Unit and integration tests cover the logic and DB layer
-  only. Manual checklist:
-  1. Create a 3-week series that spans a clock change, with a signup CSV;
-     check times stay at the same London wall-clock time and the CSV
-     landed on the first occurrence.
-  2. Find it in Upcoming, confirm it shows 3 sessions and a "Show N more
-     upcoming" disclosure that expands to the rest when there are more.
-  3. Tick one attendee on a later occurrence first, then open an earlier
-     occurrence, preview "delete this and later" and confirm; check the
-     occurrence with attendance is kept and the rest are gone.
-  4. Set an end time when creating a single session and via CSV import
-     (there is no edit flow, so an end time cannot be changed afterwards).
+- **Signed-in browser coverage**: the recurring form, the delete panel and
+  the sessions-list drop-downs are now exercised by the acceptance specs
+  (see "Acceptance tests" below: `recurring-series.spec.ts`,
+  `series-delete.spec.ts`, `sessions-list.spec.ts`). The one manual item the
+  specs do not cover: setting an end time when creating a single (non
+  recurring) session, and the visual layout / look of these screens on a
+  phone. Check those by hand.
+
+## Acceptance tests
+
+Signed-in browser specs in `tests/acceptance/`, run against a real Supabase
+project (the dev project) with a throwaway club, admin and auth user.
+
+- **Covers**: sign-in and redirects (signed-out redirect, wrong password,
+  another club's pages refused); the pending spinner then skeleton on
+  navigation (dev-server only, since it depends on dev rendering timing);
+  the recurring series form incl. the Europe/London clock change and the
+  signup CSV (and its validation failures); the sessions list drop-downs
+  (3 upcoming / 3 past, the rest folded); series delete keeping sessions
+  with attendance; the purchases "Re-check unmatched" button (CID match
+  turns an unmatched student purchase into `cid_matched`; a non-matching CID
+  stays unmatched).
+- **Run**: `npm run test:acceptance` starts its own dev server on port 3100
+  and errors if that port is already taken (it never reuses a server).
+  `ACCEPTANCE_BASE_URL=https://... npm run test:acceptance` targets a
+  deployed app instead; the deployed app must use the same Supabase project
+  as your `.env.local`. The dev-only spinner/skeleton test is skipped in
+  that mode.
+- **Data hygiene**: each run creates one throwaway club, admin and auth
+  user (`acceptance-...@example.test`), wipes the club's data after every
+  test, and deletes everything at the end. A run also sweeps stale
+  throwaway clubs/users older than 1 hour left by crashed runs. Real clubs
+  (judo, taekwondo) are never written to; the helpers refuse to touch a
+  club that is not a throwaway one.
+- **NOT VERIFIED (these specs do not and cannot show)**:
+  - Vercel function region vs Supabase region (latency between them).
+  - The plan's / Fluid Compute `maxDuration` limit (the purchases page sets
+    60 s; the real allowance is unconfirmed).
+  - Real-export upload timing on the deployed app (the ~5,000-row upload).
+  - The email / Resend path (invites, chase emails): never sent in tests.
 
 ## Known open items
 
