@@ -195,4 +195,47 @@ test.describe("listRecentSessions", () => {
     const results = await listRecentSessions(judoClubId);
     expect(results.some((r) => r.id === tkdSession!.id)).toBe(false);
   });
+
+  test("returns correct attendee counts when there are more than 100 sessions", async () => {
+    const base = Date.now() + 365 * 24 * 60 * 60 * 1000; // far future, clear of other tests
+    const { data: inserted, error } = await admin
+      .from("session")
+      .insert(
+        Array.from({ length: 130 }, (_, i) => ({
+          club_id: judoClubId,
+          title: `Session List Bulk ${i}`,
+          starts_at: new Date(base + i * 60 * 60 * 1000).toISOString(),
+        }))
+      )
+      .select("id, starts_at");
+    if (error) throw error;
+    const ordered = inserted!.sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
+    sessionIds.push(...ordered.map((s) => s.id));
+
+    const p1 = await createPerson();
+    const p2 = await createPerson();
+    personIds.push(p1, p2);
+    const mk = (sessionId: string, personId: string, attended: boolean) => ({
+      club_id: judoClubId,
+      session_id: sessionId,
+      person_id: personId,
+      attended,
+      source: "manual_tick",
+    });
+    // Index 3 is in the first chunk of 100, index 120 in the second.
+    const { error: recError } = await admin.from("attendance_record").insert([
+      mk(ordered[3].id, p1, true),
+      mk(ordered[3].id, p2, true),
+      mk(ordered[120].id, p1, true),
+      mk(ordered[120].id, p2, false),
+    ]);
+    if (recError) throw recError;
+
+    const results = await listRecentSessions(judoClubId);
+    const byId = new Map(results.map((r) => [r.id, r.attendeeCount]));
+    expect(byId.get(ordered[3].id)).toBe(2);
+    expect(byId.get(ordered[120].id)).toBe(1);
+    expect(byId.get(ordered[0].id)).toBe(0);
+    expect(byId.get(ordered[129].id)).toBe(0);
+  });
 });

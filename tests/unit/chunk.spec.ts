@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { chunk } from "@/lib/session-series/delete";
+import { chunk } from "@/lib/chunk";
 
 test.describe("chunk", () => {
   test("empty input gives no chunks", () => {

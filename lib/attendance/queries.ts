@@ -1,4 +1,5 @@
 import { createClubScopedClient } from "@/lib/supabase/club-scoped";
+import { chunk } from "@/lib/chunk";
 
 // Caller identity is checked in app/club/[clubSlug]/sessions/[sessionId]/page.tsx
 // (the only caller) before this runs — see lib/auth/require-admin.ts.
@@ -188,16 +189,21 @@ export async function listRecentSessions(clubId: string): Promise<SessionListIte
     // page size) so PostgREST's default max-rows cap can't silently
     // truncate the count once total attendance across this 30-day window
     // grows past it.
-    const { data: attendanceRows, error: attendanceError } = await scoped
-      .from("attendance_record")
-      .select("session_id")
-      .eq("attended", true)
-      .in("session_id", sessionIds)
-      .range(0, 9999);
-    if (attendanceError) throw attendanceError;
-    const typedAttendanceRows = attendanceRows as unknown as { session_id: string }[];
-    for (const row of typedAttendanceRows ?? []) {
-      countsBySessionId.set(row.session_id, (countsBySessionId.get(row.session_id) ?? 0) + 1);
+    //
+    // Ids go to the filter in chunks of 100: future occurrences of recurring
+    // series have no upper date bound, so one big .in() could exceed URL limits.
+    for (const idChunk of chunk(sessionIds, 100)) {
+      const { data: attendanceRows, error: attendanceError } = await scoped
+        .from("attendance_record")
+        .select("session_id")
+        .eq("attended", true)
+        .in("session_id", idChunk)
+        .range(0, 9999);
+      if (attendanceError) throw attendanceError;
+      const typedAttendanceRows = attendanceRows as unknown as { session_id: string }[];
+      for (const row of typedAttendanceRows ?? []) {
+        countsBySessionId.set(row.session_id, (countsBySessionId.get(row.session_id) ?? 0) + 1);
+      }
     }
   }
 

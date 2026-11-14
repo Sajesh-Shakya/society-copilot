@@ -1,14 +1,8 @@
 import { createClubScopedClient } from "@/lib/supabase/club-scoped";
+import { chunk } from "@/lib/chunk";
 
 /** Max ids per `.in()` filter / per delete statement. */
 const CHUNK_SIZE = 100;
-
-export function chunk<T>(items: T[], size: number): T[][] {
-  if (!Number.isInteger(size) || size < 1) throw new Error("chunk size must be a positive integer");
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
 
 export interface SeriesDeletePlan {
   seriesId: string;
