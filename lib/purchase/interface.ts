@@ -117,7 +117,7 @@ export async function ingestPurchases(
   // 'unmatched' default below.
   let matched: Map<string, import('./types').MatchResult>;
   try {
-    ({ matched } = await matchOrQueue(newRows, clubId));
+    ({ matched } = await matchOrQueue(validRows, clubId));
   } catch (error) {
     // A transport-level throw would otherwise abort the whole batch with no
     // partial result. Degrade to "nothing matched" — every row still gets
@@ -218,12 +218,21 @@ export async function ingestPurchases(
   // date, not simply the last row processed. Determine, per matched person,
   // which purchase in this batch is their latest by purchasedAt — only that
   // one's is_student value gets applied below.
-  const latestByPerson = new Map<string, (typeof purchases)[number]>();
-  for (const purchase of purchases) {
-    if (!purchase.personId) continue;
-    const current = latestByPerson.get(purchase.personId);
-    if (!current || purchase.purchasedAt > current.purchasedAt) {
-      latestByPerson.set(purchase.personId, purchase);
+  // Rows skipped as already ingested still compete for "latest": an older new
+  // row must not override a newer, already-applied purchase. Their entry has
+  // purchase: null, so nothing is applied if one of them wins.
+  const latestByPerson = new Map<string, { purchasedAt: Date; purchase: (typeof purchases)[number] | null }>();
+  const builtByKey = new Map(purchases.map((p) => [rowKey(p.source, p.sourceRowId), p]));
+  const newKeys = new Set(newRows.map((r) => rowKey(r.source, r.externalId)));
+  for (const row of validRows) {
+    const key = rowKey(row.source, row.externalId);
+    const purchase = builtByKey.get(key) ?? null;
+    if (purchase === null && newKeys.has(key)) continue; // failed product resolution
+    const personId = purchase ? purchase.personId : (matched.get(row.externalId)?.personId ?? null);
+    if (!personId) continue;
+    const current = latestByPerson.get(personId);
+    if (!current || row.purchasedAt > current.purchasedAt) {
+      latestByPerson.set(personId, { purchasedAt: row.purchasedAt, purchase });
     }
   }
 
@@ -324,7 +333,7 @@ export async function ingestPurchases(
     if (!purchase.personId) return;
     const rawRow = rawRowFor(purchase.source, purchase.sourceRowId);
 
-    if (latestByPerson.get(purchase.personId) === purchase) {
+    if (latestByPerson.get(purchase.personId)?.purchase === purchase) {
       try {
         const { error: updateError } = await scoped
           .from('person')

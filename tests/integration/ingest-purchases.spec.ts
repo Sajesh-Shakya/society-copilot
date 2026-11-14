@@ -260,6 +260,43 @@ test.describe("ingestPurchases", () => {
     expect(result).toEqual({ inserted: 1, duplicates: 1, errors: [] });
   });
 
+  test("an older new row does not override a newer already-ingested purchase's is_student", async () => {
+    const pid = await createProduct();
+    const email = `ingest-test-${randomUUID()}@example.test`;
+    personId = await createPerson(email);
+    const common = { personEmail: email, personName: "Ingest Test Person" };
+    const [newer] = makeRows(1, pid, { ...common, memberType: "Public", purchasedAt: new Date("2026-03-01T00:00:00.000Z") });
+    const [older] = makeRows(1, pid, { ...common, memberType: "Student", purchasedAt: new Date("2026-01-01T00:00:00.000Z") });
+
+    expect((await ingestPurchases([newer], judoClubId)).inserted).toBe(1);
+    const { data: before } = await admin.from("person").select("is_student").eq("id", personId).single();
+    expect(before!.is_student).toBe(false);
+
+    const result = await ingestPurchases([newer, older], judoClubId);
+    expect(result).toEqual({ inserted: 1, duplicates: 1, errors: [] });
+    const { data: after } = await admin.from("person").select("is_student").eq("id", personId).single();
+    expect(after!.is_student).toBe(false);
+  });
+
+  test("450 rows span multiple chunks; re-ingest is all duplicates", async () => {
+    const pid = await createProduct();
+    const rows = makeRows(450, pid);
+    expect(await ingestPurchases(rows, judoClubId)).toEqual({ inserted: 450, duplicates: 0, errors: [] });
+    expect(await ingestPurchases(rows, judoClubId)).toEqual({ inserted: 0, duplicates: 450, errors: [] });
+  });
+
+  test("a bad row in a later chunk hits the per-row fallback without losing other chunks", async () => {
+    const pid = await createProduct();
+    const rows = makeRows(450, pid);
+    const bad = { ...rows[300], productId: randomUUID() };
+    const batch = [...rows.slice(0, 300), bad, ...rows.slice(301)];
+    const result = await ingestPurchases(batch, judoClubId);
+    expect(result.inserted).toBe(449);
+    expect(result.duplicates).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].rowId).toBe(bad.externalId);
+  });
+
   test("skipExistingCheck still counts conflicts as duplicates", async () => {
     const pid = await createProduct();
     const rows = makeRows(3, pid);
