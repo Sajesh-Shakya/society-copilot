@@ -2,19 +2,24 @@ import { z } from "zod";
 import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 import { normalizeCid } from "@/lib/utils";
 import { loadPersonIndex } from "@/lib/purchase/person-index";
+import { optionalEndsAtSchema, endsAfterStart, endsAfterStartRefinement } from "@/lib/attendance/end-time";
 import type { AttendeeRow } from "./parser";
 
 // Mirrors lib/attendance/actions.ts's createSessionFromSignup schema for
 // startsAt (accept either an offset-qualified ISO datetime or any
 // non-empty string the caller has already normalized).
-export const createSessionFromCsvSchema = z.object({
-  title: z.string().min(1).max(200),
-  startsAt: z.string().datetime({ offset: true }).or(z.string().min(1)),
-});
+export const createSessionFromCsvSchema = z
+  .object({
+    title: z.string().min(1).max(200),
+    startsAt: z.string().datetime({ offset: true }).or(z.string().min(1)),
+    endsAt: optionalEndsAtSchema,
+  })
+  .refine(endsAfterStart, endsAfterStartRefinement);
 
 export interface ImportAttendanceCsvInput {
   title: string;
   startsAt: string;
+  endsAt?: string | null;
   rows: AttendeeRow[];
 }
 
@@ -168,7 +173,11 @@ export async function importAttendanceCsv(
 
   const { data: session, error: sessionError } = await scoped
     .from("session")
-    .insert({ title: input.title, starts_at: new Date(input.startsAt).toISOString() })
+    .insert({
+      title: input.title,
+      starts_at: new Date(input.startsAt).toISOString(),
+      ends_at: input.endsAt ? new Date(input.endsAt).toISOString() : null,
+    })
     .select("id")
     .single();
   if (sessionError) throw sessionError;

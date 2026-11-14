@@ -16,6 +16,8 @@ export interface SessionWithAttendance {
   id: string;
   title: string;
   startsAt: string;
+  endsAt: string | null;
+  seriesId: string | null;
   eactivitiesSignupId: string | null;
   lastSyncedAt: string | null;
   cancelledAt: string | null;
@@ -55,7 +57,7 @@ export async function getSessionWithAttendance(
 
   const { data: session, error: sessionError } = await scoped
     .from("session")
-    .select("id, title, starts_at, eactivities_signup_id, last_synced_at, cancelled_at")
+    .select("id, title, starts_at, ends_at, series_id, eactivities_signup_id, last_synced_at, cancelled_at")
     .eq("id", sessionId)
     .maybeSingle();
   if (sessionError) throw sessionError;
@@ -67,6 +69,8 @@ export async function getSessionWithAttendance(
     id: string;
     title: string;
     starts_at: string;
+    ends_at: string | null;
+    series_id: string | null;
     eactivities_signup_id: string | null;
     last_synced_at: string | null;
     cancelled_at: string | null;
@@ -104,6 +108,8 @@ export async function getSessionWithAttendance(
     id: typedSession.id,
     title: typedSession.title,
     startsAt: typedSession.starts_at,
+    endsAt: typedSession.ends_at,
+    seriesId: typedSession.series_id,
     eactivitiesSignupId: typedSession.eactivities_signup_id,
     lastSyncedAt: typedSession.last_synced_at,
     cancelledAt: typedSession.cancelled_at,
@@ -115,6 +121,8 @@ export interface SessionListItem {
   id: string;
   title: string;
   startsAt: string;
+  endsAt: string | null;
+  seriesId: string | null;
   attendeeCount: number;
   isToday: boolean;
   isFuture: boolean;
@@ -152,7 +160,7 @@ export async function listRecentSessions(clubId: string): Promise<SessionListIte
 
   const { data: sessions, error: sessionsError } = await scoped
     .from("session")
-    .select("id, title, starts_at, cancelled_at")
+    .select("id, title, starts_at, ends_at, series_id, cancelled_at")
     .gte("starts_at", thirtyDaysAgo)
     .or(`cancelled_at.is.null,cancelled_at.gt.${thirtyMinutesAgo}`)
     .order("starts_at", { ascending: false });
@@ -162,6 +170,8 @@ export async function listRecentSessions(clubId: string): Promise<SessionListIte
     id: string;
     title: string;
     starts_at: string;
+    ends_at: string | null;
+    series_id: string | null;
     cancelled_at: string | null;
   }[];
 
@@ -195,6 +205,8 @@ export async function listRecentSessions(clubId: string): Promise<SessionListIte
     id: s.id,
     title: s.title,
     startsAt: s.starts_at,
+    endsAt: s.ends_at,
+    seriesId: s.series_id,
     attendeeCount: countsBySessionId.get(s.id) ?? 0,
     isToday: isUtcToday(s.starts_at),
     isFuture: new Date(s.starts_at).getTime() > Date.now(),

@@ -24,6 +24,7 @@ import {
 } from "@/lib/attendance/actions";
 import { reconcileRows } from "@/lib/attendance/reconcile";
 import { fuzzyMatches } from "@/lib/attendance/fuzzy-match";
+import { formatSessionTimes } from "@/lib/attendance/end-time";
 import type { AttendanceRow, SessionWithAttendance } from "@/lib/attendance/queries";
 import { AddAttendee } from "@/components/attendance/add-attendee";
 import { SyncCsvButton } from "@/components/attendance/sync-csv-button";
@@ -183,7 +184,7 @@ export function AttendanceScreen({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{session.title}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {new Date(session.startsAt).toLocaleString()}
+            {formatSessionTimes(session.startsAt, session.endsAt)}
             {session.lastSyncedAt && (
               <> · last synced {new Date(session.lastSyncedAt).toLocaleTimeString()}</>
             )}

@@ -52,6 +52,7 @@ export function SessionPicker({
   const [signupId, setSignupId] = useState<string>("");
   const [title, setTitle] = useState("");
   const [startsAt, setStartsAt] = useState("");
+  const [endsAt, setEndsAt] = useState("");
   const [loadingSignups, setLoadingSignups] = useState(false);
 
   async function handleEventChange(id: string) {
@@ -63,10 +64,12 @@ export function SessionPicker({
       setTitle(event.title);
       setStartsAt(toDatetimeLocal(event.startsAt));
     }
+    setEndsAt("");
     setLoadingSignups(true);
     try {
       const detail = await getEventSignups(clubSlug, id);
       setSignups(detail.signups);
+      if (detail.endsAt) setEndsAt(toDatetimeLocal(detail.endsAt));
     } catch {
       toast.error("Couldn't load this event's signups from eActivities.");
       setSignups([]);
@@ -84,6 +87,7 @@ export function SessionPicker({
           signupId,
           title,
           startsAt: new Date(startsAt).toISOString(),
+          endsAt: endsAt ? new Date(endsAt).toISOString() : undefined,
         });
         toast.success("Session created");
         router.push(clubPath(clubSlug, `/sessions/${sessionId}`));
@@ -150,6 +154,15 @@ export function SessionPicker({
                 type="datetime-local"
                 value={startsAt}
                 onChange={(e) => setStartsAt(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="endsAt">Ends at (optional)</Label>
+              <Input
+                id="endsAt"
+                type="datetime-local"
+                value={endsAt}
+                onChange={(e) => setEndsAt(e.target.value)}
               />
             </div>
             <Button onClick={handleSubmit} disabled={isPending} className="self-start">

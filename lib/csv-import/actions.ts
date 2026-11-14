@@ -30,9 +30,14 @@ export async function createSessionFromCsv(
   const parsed = createSessionFromCsvSchema.safeParse({
     title: String(formData.get("title") ?? ""),
     startsAt: String(formData.get("startsAt") ?? ""),
+    endsAt: String(formData.get("endsAt") ?? ""),
   });
   if (!parsed.success) {
-    return { success: false, message: "Enter a title and start time." };
+    const endIssue = parsed.error.issues.find((i) => i.path[0] === "endsAt");
+    return {
+      success: false,
+      message: endIssue ? endIssue.message : "Enter a title and start time.",
+    };
   }
 
   const file = formData.get("file");
@@ -56,7 +61,7 @@ export async function createSessionFromCsv(
 
   try {
     const result = await importAttendanceCsv(
-      { title: parsed.data.title, startsAt: parsed.data.startsAt, rows },
+      { title: parsed.data.title, startsAt: parsed.data.startsAt, endsAt: parsed.data.endsAt ?? null, rows },
       clubId
     );
     return {

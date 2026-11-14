@@ -119,6 +119,7 @@ function SessionRow({
     id: string;
     title: string;
     startsAt: string;
+    endsAt: string | null;
     attendeeCount: number;
     cancelledAt: string | null;
   };
@@ -126,7 +127,7 @@ function SessionRow({
 }) {
   const inWindow = isInPrefetchWindow({
     startsAt: new Date(session.startsAt),
-    endsAt: null, // no end time stored yet; the helper assumes start + 2h
+    endsAt: session.endsAt ? new Date(session.endsAt) : null,
     cancelledAt: session.cancelledAt ? new Date(session.cancelledAt) : null,
     now: new Date(),
   });

@@ -16,6 +16,12 @@ import { getSessionWithAttendance, assertSessionBelongsToClub } from "@/lib/atte
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
 import { reapplyWaiversForPerson } from "@/lib/purchase/interface";
+import {
+  optionalEndsAtSchema,
+  endsAfterStart,
+  endsAfterStartRefinement,
+  normalizeEventEnd,
+} from "@/lib/attendance/end-time";
 
 // ---------------------------------------------------------------------------
 // 3.0 — session creation / signup binding (AC-8)
@@ -37,6 +43,7 @@ export async function getEventSignups(clubSlug: string, eventId: string) {
     id: event.ID,
     title: event.Title,
     startsAt: event.EventStart,
+    endsAt: normalizeEventEnd(event.EventStart, event.EventEnd),
     signups: event.Signups.map((s) => ({
       id: s.ID,
       title: s.Title,
@@ -46,12 +53,15 @@ export async function getEventSignups(clubSlug: string, eventId: string) {
   };
 }
 
-const createSessionSchema = z.object({
-  eventId: z.string().min(1),
-  signupId: z.string().min(1),
-  title: z.string().min(1).max(200),
-  startsAt: z.string().datetime({ offset: true }).or(z.string().min(1)),
-});
+const createSessionSchema = z
+  .object({
+    eventId: z.string().min(1),
+    signupId: z.string().min(1),
+    title: z.string().min(1).max(200),
+    startsAt: z.string().datetime({ offset: true }).or(z.string().min(1)),
+    endsAt: optionalEndsAtSchema,
+  })
+  .refine(endsAfterStart, endsAfterStartRefinement);
 
 export async function createSessionFromSignup(
   clubSlug: string,
@@ -76,6 +86,7 @@ export async function createSessionFromSignup(
       eactivities_signup_id: parsed.signupId,
       title: parsed.title,
       starts_at: new Date(parsed.startsAt).toISOString(),
+      ends_at: parsed.endsAt ? new Date(parsed.endsAt).toISOString() : null,
     })
     .select("id")
     .single();

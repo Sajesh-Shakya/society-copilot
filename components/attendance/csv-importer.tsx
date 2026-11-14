@@ -31,6 +31,8 @@ export function CsvImporter({ clubSlug }: { clubSlug: string }) {
     // conversion components/attendance/session-picker.tsx already does.
     const startsAtRaw = String(formData.get("startsAt") ?? "");
     formData.set("startsAt", startsAtRaw ? new Date(startsAtRaw).toISOString() : "");
+    const endsAtRaw = String(formData.get("endsAt") ?? "");
+    formData.set("endsAt", endsAtRaw ? new Date(endsAtRaw).toISOString() : "");
 
     setIsPending(true);
     try {
@@ -57,6 +59,10 @@ export function CsvImporter({ clubSlug }: { clubSlug: string }) {
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="startsAt">Starts at</Label>
         <Input id="startsAt" name="startsAt" type="datetime-local" required />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="endsAt">Ends at (optional)</Label>
+        <Input id="endsAt" name="endsAt" type="datetime-local" />
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="file">Attendee CSV (exported from eActivities&apos; dashboard)</Label>
