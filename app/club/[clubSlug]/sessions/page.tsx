@@ -5,7 +5,7 @@ import { clubPath } from "@/lib/club-path";
 import { listRecentSessions } from "@/lib/attendance/queries";
 import { isInPrefetchWindow } from "@/lib/attendance/event-window";
 import { countFailedChaseEmails } from "@/lib/chase/queries";
-import { limitUpcomingPerSeries } from "@/lib/session-series/upcoming";
+import { splitSessionsForDisplay } from "@/lib/attendance/list-display";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SignOutButton } from "@/components/auth/sign-out-button";
@@ -34,8 +34,9 @@ export default async function SessionsIndexPage({
   // `sessions` is newest-starting-first overall; for "what's coming up"
   // the soonest session should lead, so this one group is reversed.
   const upcomingSessions = sessions.filter((s) => !s.isToday && s.isFuture).reverse();
-  const { shown: shownUpcoming, hiddenBySeries } = limitUpcomingPerSeries(upcomingSessions, 3);
   const pastSessions = sessions.filter((s) => !s.isToday && !s.isFuture);
+  const upcoming = splitSessionsForDisplay(upcomingSessions, 3);
+  const past = splitSessionsForDisplay(pastSessions, 3);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6 sm:py-10">
@@ -89,29 +90,21 @@ export default async function SessionsIndexPage({
         <div className="mt-8">
           <h2 className="text-sm font-semibold text-muted-foreground">Upcoming</h2>
           <div className="mt-2 flex flex-col gap-2">
-            {shownUpcoming.map((s, i) => {
-              const hidden = s.seriesId ? hiddenBySeries.get(s.seriesId) : undefined;
-              const isLastShownOfSeries =
-                !!s.seriesId &&
-                !shownUpcoming.slice(i + 1).some((later) => later.seriesId === s.seriesId);
-              return (
-                <div key={s.id} className="flex flex-col gap-1">
-                  <SessionRow session={s} clubSlug={clubSlug} />
-                  {hidden && isLastShownOfSeries && (
-                    <details className="group">
-                      <summary className="cursor-pointer px-1 text-xs text-muted-foreground">
-                        +{hidden.length} more in this series
-                      </summary>
-                      <div className="mt-2 flex flex-col gap-2">
-                        {hidden.map((h) => (
-                          <SessionRow key={h.id} session={h} clubSlug={clubSlug} />
-                        ))}
-                      </div>
-                    </details>
-                  )}
+            {upcoming.shown.map((s) => (
+              <SessionRow key={s.id} session={s} clubSlug={clubSlug} />
+            ))}
+            {upcoming.folded.length > 0 && (
+              <details data-testid="upcoming-more">
+                <summary className="cursor-pointer px-1 text-xs text-muted-foreground">
+                  Show {upcoming.folded.length} more upcoming
+                </summary>
+                <div className="mt-2 flex flex-col gap-2">
+                  {upcoming.folded.map((s) => (
+                    <SessionRow key={s.id} session={s} clubSlug={clubSlug} />
+                  ))}
                 </div>
-              );
-            })}
+              </details>
+            )}
           </div>
         </div>
       )}
@@ -120,7 +113,23 @@ export default async function SessionsIndexPage({
         <h2 className="text-sm font-semibold text-muted-foreground">Past (last 30 days)</h2>
         <div className="mt-2 flex flex-col gap-2">
           {pastSessions.length > 0 ? (
-            pastSessions.map((s) => <SessionRow key={s.id} session={s} clubSlug={clubSlug} />)
+            <>
+              {past.shown.map((s) => (
+                <SessionRow key={s.id} session={s} clubSlug={clubSlug} />
+              ))}
+              {past.folded.length > 0 && (
+                <details data-testid="past-more">
+                  <summary className="cursor-pointer px-1 text-xs text-muted-foreground">
+                    Show {past.folded.length} earlier
+                  </summary>
+                  <div className="mt-2 flex flex-col gap-2">
+                    {past.folded.map((s) => (
+                      <SessionRow key={s.id} session={s} clubSlug={clubSlug} />
+                    ))}
+                  </div>
+                </details>
+              )}
+            </>
           ) : (
             <p className="text-sm text-muted-foreground">No sessions in the last 30 days.</p>
           )}

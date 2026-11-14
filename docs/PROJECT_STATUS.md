@@ -370,10 +370,10 @@ identity — a per-club sender display name/domain hasn't been built.
     creates a weekly series (recurrence maths in
     `lib/session-series/recurrence.ts`; `createRecurringSeries` + its
     server action). A signup CSV uploaded with the form applies to the
-    first occurrence. The Upcoming list shows at most 3 occurrences per
-    series; the rest sit in a collapsible "+N more in this series"
-    disclosure (a native `<details>`) listing the hidden occurrences, so a
-    long series does not bury one-off sessions but every week stays
+    first occurrence. The sessions page shows the next 3 upcoming and the
+    last 3 past sessions; the rest sit in a collapsible "Show N more
+    upcoming" / "Show N earlier" disclosure (a native `<details>`), so a
+    long series does not bury other sessions but every one stays
     reachable. Overnight events are not supported: the end must be later
     the same day.
   - **Delete this and all later**: from an occurrence, a preview then
@@ -408,8 +408,8 @@ identity — a per-club sender display name/domain hasn't been built.
   1. Create a 3-week series that spans a clock change, with a signup CSV;
      check times stay at the same London wall-clock time and the CSV
      landed on the first occurrence.
-  2. Find it in Upcoming, confirm it shows 3 sessions and a "+N more in this
-     series" disclosure that expands to the rest when the series is longer.
+  2. Find it in Upcoming, confirm it shows 3 sessions and a "Show N more
+     upcoming" disclosure that expands to the rest when there are more.
   3. Tick one attendee on a later occurrence first, then open an earlier
      occurrence, preview "delete this and later" and confirm; check the
      occurrence with attendance is kept and the rest are gone.
