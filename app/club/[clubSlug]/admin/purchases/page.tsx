@@ -10,6 +10,9 @@ import { listRecentUploads } from '@/lib/purchase/interface';
 import { clubPath } from '@/lib/club-path';
 
 export const dynamic = 'force-dynamic';
+// Server Actions used on this page (uploadXlsx) inherit this limit. A
+// first-time 5,000-row upload measured ~120s; typical exports are far smaller.
+export const maxDuration = 60;
 
 export default async function AdminPurchasesPage({
   params,
