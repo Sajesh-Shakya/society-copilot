@@ -66,7 +66,7 @@ const createSessionSchema = z
 export async function createSessionFromSignup(
   clubSlug: string,
   input: z.infer<typeof createSessionSchema>
-): Promise<{ sessionId: string }> {
+): Promise<{ sessionId: string } | { error: string }> {
   const { clubId } = await requireAdmin(clubSlug);
   try {
     await getEactivitiesCredentials(clubId);
@@ -76,7 +76,12 @@ export async function createSessionFromSignup(
     }
     throw error;
   }
-  const parsed = createSessionSchema.parse(input);
+  const result = createSessionSchema.safeParse(input);
+  if (!result.success) {
+    const endIssue = result.error.issues.find((i) => i.path[0] === "endsAt");
+    return { error: endIssue ? endIssue.message : "Enter a title and start time." };
+  }
+  const parsed = result.data;
   const scoped = createClubScopedClient(clubId);
 
   const { data: session, error } = await scoped

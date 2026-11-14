@@ -80,17 +80,25 @@ export function SessionPicker({
 
   function handleSubmit() {
     if (!eventId || !signupId || !title || !startsAt) return;
+    if (endsAt && new Date(endsAt) <= new Date(startsAt)) {
+      toast.error("End time must be after the start time.");
+      return;
+    }
     startTransition(async () => {
       try {
-        const { sessionId } = await createSessionFromSignup(clubSlug, {
+        const result = await createSessionFromSignup(clubSlug, {
           eventId,
           signupId,
           title,
           startsAt: new Date(startsAt).toISOString(),
           endsAt: endsAt ? new Date(endsAt).toISOString() : undefined,
         });
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
         toast.success("Session created");
-        router.push(clubPath(clubSlug, `/sessions/${sessionId}`));
+        router.push(clubPath(clubSlug, `/sessions/${result.sessionId}`));
       } catch {
         toast.error("Couldn't create the session. Check EACTIVITIES_API_KEY is set.");
       }
