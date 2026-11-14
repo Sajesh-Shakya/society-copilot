@@ -311,6 +311,41 @@ identity — a per-club sender display name/domain hasn't been built.
   eu-west-2), but it should only go in once the current Vercel region is
   confirmed to be on a different continent.
 
+## Ingestion speed (2026-11-14, ingestion-speed)
+
+- **What changed**: XLSX and CSV ingestion no longer do per-row round
+  trips. Already-ingested rows are looked up in chunks and dropped before
+  an upload batch is created (a full re-upload leaves no empty batch);
+  purchases are inserted in chunks with conflict-ignoring upserts and
+  follow-ups (is_student, waivers) run only for rows actually inserted;
+  the CSV importer resolves people from one in-memory index and bulk-
+  creates the missing ones. `next.config.ts` sets
+  `experimental.serverActions.bodySizeLimit: "4mb"` (a 5,000-row export is
+  ~1.3 MB, over the 1 MB default; 4 MB stays under Vercel's 4.5 MB request
+  cap). The purchases page sets `maxDuration = 60`. Neither the uploader
+  component nor `uploadXlsx` enforces its own file-size cap.
+- **Measurements** (dev Supabase project, run from this dev machine, so
+  network latency differs from the deployed app; 5,000-row synthetic
+  XLSX, half the people pre-existing so matching was mixed, all rows
+  Student/Public with unique emails and CIDs):
+  - First-time upload: parse 0.14 s, already-ingested lookup 2.7 s,
+    ingest 117.6 s, total ~120 s (5,000 inserted, 0 errors).
+  - Same file again (all duplicates): total ~2.5 s, "Nothing new — all
+    5000 were already ingested", no upload batch created.
+  - CSV attendance import with 5,000 brand-new people: 2.4 s, 5,000
+    imported (single bulk person insert did not truncate or fail).
+- **Remaining bottleneck**: the first-time run is dominated by per-
+  purchase follow-ups for matched people (an `is_student` update and an
+  `apply_purchase_waiver` RPC each, concurrency 5, ~47 ms per matched
+  purchase). A 5,000-row first-time upload exceeds `maxDuration = 60`
+  and would time out on Vercel; roughly 1,000 matched rows or fewer fit
+  (extrapolated from the above, not measured). Batching the follow-ups
+  (one set-based waiver call per upload) is the next step if exports
+  that large are expected.
+- **NOT VERIFIED**: re-upload of the real sales export on the deployed
+  app. This needs the user's real export and a preview deploy; the
+  numbers above are synthetic and local.
+
 ## Known open items
 
 - **eActivities live sync**: down again as of 2026-11-13 (`whatson`/
