@@ -18,6 +18,24 @@ export interface SeriesDeletePlan {
   kept: { id: string; title: string; startsAt: string; attendedCount: number }[];
 }
 
+/** PostgREST caps a response at max_rows (1000 on hosted Supabase) regardless of .range(). */
+const ATTENDED_PAGE_SIZE = 1000;
+
+const GENERIC_FAILURE =
+  "Reload to see what is left before retrying. Nothing with recorded attendance was lost.";
+
+/**
+ * User-facing text for a failed delete. Raw database text is never included
+ * (callers console.error it server-side). 23503 = FK violation: an event in
+ * the batch gained attendance after planning.
+ */
+export function describeDeleteFailure(error: { code?: string }, deleted: number): string {
+  if (error.code === "23503") {
+    return `An event in this batch now has recorded attendance, so it was not deleted. ${deleted} event(s) were deleted before this, and the unattended roster rows of the failing batch were already removed. Nothing with attendance was lost. Review the series and try again.`;
+  }
+  return `Deleting events failed after ${deleted} event(s) were deleted. ${GENERIC_FAILURE}`;
+}
+
 /** Thrown when a delete fails part-way; `deleted` sessions are already gone. */
 export class SeriesDeleteError extends Error {
   constructor(message: string, readonly deleted: number) {
@@ -38,7 +56,11 @@ export class SeriesDeleteError extends Error {
  *
  * Returns null when the session is missing, in another club, or not part of a series.
  */
-export async function planSeriesDelete(sessionId: string, clubId: string): Promise<SeriesDeletePlan | null> {
+export async function planSeriesDelete(
+  sessionId: string,
+  clubId: string,
+  pageSize: number = ATTENDED_PAGE_SIZE
+): Promise<SeriesDeletePlan | null> {
   const scoped = createClubScopedClient(clubId);
 
   const { data: chosen, error: chosenError } = await scoped
@@ -67,15 +89,22 @@ export async function planSeriesDelete(sessionId: string, clubId: string): Promi
     targets.map((s) => s.id),
     CHUNK_SIZE
   )) {
-    const { data: rows, error: attendedError } = await scoped
-      .from("attendance_record")
-      .select("session_id")
-      .eq("attended", true)
-      .in("session_id", ids)
-      .range(0, 9999);
-    if (attendedError) throw attendedError;
-    for (const r of (rows ?? []) as unknown as { session_id: string }[]) {
-      attendedBySession.set(r.session_id, (attendedBySession.get(r.session_id) ?? 0) + 1);
+    // Page until a short page: the server caps rows per response, so a single
+    // .range(0, 9999) can be silently truncated.
+    for (let offset = 0; ; offset += pageSize) {
+      const { data: rows, error: attendedError } = await scoped
+        .from("attendance_record")
+        .select("session_id")
+        .eq("attended", true)
+        .in("session_id", ids)
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1);
+      if (attendedError) throw attendedError;
+      const page = (rows ?? []) as unknown as { session_id: string }[];
+      for (const r of page) {
+        attendedBySession.set(r.session_id, (attendedBySession.get(r.session_id) ?? 0) + 1);
+      }
+      if (page.length < pageSize) break;
     }
   }
 
@@ -118,21 +147,14 @@ export async function executeSeriesDelete(
       .in("session_id", part)
       .eq("attended", false);
     if (recordsError) {
-      throw new SeriesDeleteError(
-        `Deleting roster rows failed after ${deleted} event(s) were deleted: ${recordsError.message}. Nothing else was changed.`,
-        deleted
-      );
+      console.error("executeSeriesDelete: deleting roster rows failed:", recordsError);
+      throw new SeriesDeleteError(describeDeleteFailure(recordsError, deleted), deleted);
     }
 
     const { error: sessionsError } = await scoped.from("session").delete().in("id", part);
     if (sessionsError) {
-      const fk = sessionsError.code === "23503";
-      throw new SeriesDeleteError(
-        fk
-          ? `An event in this batch now has recorded attendance, so it was not deleted. ${deleted} event(s) were deleted before this; nothing with attendance was lost. Review the series and try again.`
-          : `Deleting events failed after ${deleted} event(s) were deleted: ${sessionsError.message}. Nothing else was changed.`,
-        deleted
-      );
+      console.error("executeSeriesDelete: deleting sessions failed:", sessionsError);
+      throw new SeriesDeleteError(describeDeleteFailure(sessionsError, deleted), deleted);
     }
     deleted += part.length;
   }
@@ -143,18 +165,14 @@ export async function executeSeriesDelete(
     .eq("series_id", plan.seriesId)
     .limit(1);
   if (remainingError) {
-    throw new SeriesDeleteError(
-      `${deleted} event(s) were deleted, but checking the rest of the series failed: ${remainingError.message}.`,
-      deleted
-    );
+    console.error("executeSeriesDelete: checking remaining sessions failed:", remainingError);
+    throw new SeriesDeleteError(describeDeleteFailure({}, deleted), deleted);
   }
   if (((remaining ?? []) as unknown[]).length === 0) {
     const { error: seriesError } = await scoped.from("session_series").delete().eq("id", plan.seriesId);
     if (seriesError) {
-      throw new SeriesDeleteError(
-        `${deleted} event(s) were deleted, but removing the empty series record failed: ${seriesError.message}.`,
-        deleted
-      );
+      console.error("executeSeriesDelete: removing the series row failed:", seriesError);
+      throw new SeriesDeleteError(describeDeleteFailure({}, deleted), deleted);
     }
   }
 
