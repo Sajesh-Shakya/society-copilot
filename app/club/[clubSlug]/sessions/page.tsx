@@ -5,6 +5,7 @@ import { clubPath } from "@/lib/club-path";
 import { listRecentSessions } from "@/lib/attendance/queries";
 import { isInPrefetchWindow } from "@/lib/attendance/event-window";
 import { countFailedChaseEmails } from "@/lib/chase/queries";
+import { limitUpcomingPerSeries } from "@/lib/session-series/upcoming";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SignOutButton } from "@/components/auth/sign-out-button";
@@ -33,7 +34,8 @@ export default async function SessionsIndexPage({
   // `sessions` is newest-starting-first overall; for "what's coming up"
   // the soonest session should lead, so this one group is reversed.
   const upcomingSessions = sessions.filter((s) => !s.isToday && s.isFuture).reverse();
-  const pastSessions = sessions.filter((s) => !s.isToday && !s.isFuture);
+  const { shown: shownUpcoming, hiddenCountBySeries } = limitUpcomingPerSeries(upcomingSessions, 3);
+  const pastSessions =sessions.filter((s) => !s.isToday && !s.isFuture);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6 sm:py-10">
@@ -65,6 +67,9 @@ export default async function SessionsIndexPage({
           <Button asChild variant="outline">
             <PendingLink href={clubPath(clubSlug, "/sessions/import")}>New session (CSV import)</PendingLink>
           </Button>
+          <Button asChild variant="outline">
+            <PendingLink href={clubPath(clubSlug, "/sessions/recurring")}>New recurring series</PendingLink>
+          </Button>
           <SignOutButton />
         </div>
       </div>
@@ -84,9 +89,22 @@ export default async function SessionsIndexPage({
         <div className="mt-8">
           <h2 className="text-sm font-semibold text-muted-foreground">Upcoming</h2>
           <div className="mt-2 flex flex-col gap-2">
-            {upcomingSessions.map((s) => (
-              <SessionRow key={s.id} session={s} clubSlug={clubSlug} />
-            ))}
+            {shownUpcoming.map((s, i) => {
+              const hidden = s.seriesId ? hiddenCountBySeries.get(s.seriesId) : undefined;
+              const isLastShownOfSeries =
+                !!s.seriesId &&
+                !shownUpcoming.slice(i + 1).some((later) => later.seriesId === s.seriesId);
+              return (
+                <div key={s.id} className="flex flex-col gap-1">
+                  <SessionRow session={s} clubSlug={clubSlug} />
+                  {hidden && isLastShownOfSeries && (
+                    <p className="px-1 text-xs text-muted-foreground">
+                      +{hidden} more in this series
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
