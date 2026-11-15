@@ -14,8 +14,9 @@ import { EactivitiesNotConfiguredError } from "@/lib/eactivities/types";
 import { syncSessionAttendance } from "@/lib/attendance/sync";
 import { getSessionWithAttendance, assertSessionBelongsToClub } from "@/lib/attendance/queries";
 import { requireAdmin } from "@/lib/auth/require-admin";
-import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
 import { reapplyWaiversForPerson } from "@/lib/purchase/interface";
+import { createWalkInForClub, type WalkInResult } from "@/lib/attendance/walk-in";
+import type { walkInSchema } from "@/lib/identity/walk-in-schema";
 import {
   optionalEndsAtSchema,
   endsAfterStart,
@@ -262,92 +263,16 @@ export async function addExistingPersonToSession(clubSlug: string, sessionId: st
 // 3.5 — walk-in creation (AC-5)
 // ---------------------------------------------------------------------------
 
-const walkInSchema = z.object({
-  sessionId: z.string().uuid(),
-  email: z.string().email(),
-  fullName: z.string().min(1).max(200),
-  // An external/non-member guest won't have one (they can't sign up via
-  // eActivities' whatson at all, hence walk-in) -- a student who is one
-  // might, and capturing it here is what lets a later purchase (lib/
-  // purchase/matcher.ts's CID match) actually find them.
-  cid: z.string().max(20).optional(),
-});
-
+// Validation (lib/identity/walk-in-schema.ts, shared with the form) and the
+// CID trust rule live in createWalkInForClub; see lib/attendance/walk-in.ts.
+// A validation failure comes back as { error } rather than a throw, so the
+// form can show the message (Next.js strips thrown messages in production).
 export async function createWalkIn(
   clubSlug: string,
-  input: z.infer<typeof walkInSchema>
-): Promise<{ personId: string; reusedExisting: boolean }> {
+  input: z.input<typeof walkInSchema>
+): Promise<WalkInResult> {
   const { clubId } = await requireAdmin(clubSlug);
-  const { sessionId, email, fullName, cid: rawCid } = walkInSchema.parse(input);
-  await assertSessionBelongsToClub(sessionId, clubId);
-  const cid = rawCid ? normalizeCid(rawCid) : null;
-  const scoped = createClubScopedClient(clubId);
-
-  // CID first, if given -- mirrors lib/attendance/sync.ts's identity
-  // priority (CID is the one identifier this codebase actually trusts).
-  // Falls back to email -- someone searching the roster only sees people
-  // already on *this* session's list filtered out (see AddAttendee),
-  // they can still land here via "create new person" for someone who
-  // already exists in the `person` table generally (a different session,
-  // or added before this one existed). person.email has no DB-level
-  // unique constraint, so without this check every such case would
-  // silently create a duplicate person row instead of reusing the real
-  // one.
-  // createClubScopedClient's select() wrapper types `columns` as a plain
-  // `string` rather than a literal, so supabase-js can't statically parse
-  // the query -- same cast-after-fetch convention as lib/attendance/sync.ts
-  // and lib/attendance/queries.ts.
-  let existing: { id: string; cid: string | null } | null = null;
-  if (cid) {
-    const { data, error } = await scoped.from("person").select("id, cid").eq("cid", cid).maybeSingle();
-    if (error) throw error;
-    existing = data as unknown as { id: string; cid: string | null } | null;
-  }
-  if (!existing) {
-    const { data, error } = await scoped
-      .from("person")
-      .select("id, cid")
-      .ilike("email", escapeIlikePattern(email))
-      .maybeSingle();
-    if (error) throw error;
-    existing = data as unknown as { id: string; cid: string | null } | null;
-  }
-
-  let personId: string;
-  if (existing) {
-    personId = existing.id;
-    if (cid && !existing.cid) {
-      const { error: backfillError } = await scoped.from("person").update({ cid }).eq("id", existing.id);
-      if (backfillError) throw backfillError;
-    }
-  } else {
-    const { data: person, error: personError } = await scoped
-      .from("person")
-      .insert({ email, full_name: fullName, cid, identity_confidence: "provisional" })
-      .select("id")
-      .single();
-    if (personError) throw personError;
-    personId = person.id;
-  }
-
-  // See the comment in addExistingPersonToSession above -- same reasoning:
-  // attendance_record's unique(person_id, session_id) constraint has no
-  // club_id in it and never crosses a club boundary, so the scoped
-  // upsert() wrapper's onConflict/ignoreDuplicates requirement doesn't
-  // apply and would force the wrong (DO-NOTHING) semantics here. sessionId
-  // was verified via assertSessionBelongsToClub above; personId is either
-  // freshly inserted via the scoped client (so already this club) or an
-  // `existing` row found via a scoped lookup.
-  const admin = createAdminClient();
-  const { error: attendanceError } = await admin.from("attendance_record").upsert(
-    { club_id: clubId, person_id: personId, session_id: sessionId, attended: true, source: existing ? "manual_tick" : "walk_in" },
-    { onConflict: "person_id,session_id" }
-  );
-  if (attendanceError) throw attendanceError;
-
-  await reapplyWaiversForPerson(personId);
-
-  return { personId, reusedExisting: !!existing };
+  return createWalkInForClub(clubId, input);
 }
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ import {
   type PersonSearchResult,
 } from "@/lib/attendance/actions";
 import type { AttendanceRow } from "@/lib/attendance/queries";
+import { validateWalkInFields } from "@/lib/identity/walk-in-schema";
 
 // AC-4 then AC-5, chained: search for an existing person by (possibly
 // misspelled) name first; only if none of the suggestions match does the
@@ -38,6 +39,15 @@ export function AddAttendee({
   const [walkInName, setWalkInName] = useState("");
   const [walkInCid, setWalkInCid] = useState("");
   const [isPending, startTransition] = useTransition();
+
+  // Same schema the server action parses with, so the messages match. Name
+  // and CID errors show as soon as something is typed; email's only once it
+  // is non-empty (the browser's type="email" covers the rest).
+  const fieldErrors = validateWalkInFields({ email: walkInEmail, fullName: walkInName, cid: walkInCid });
+  const walkInInvalid = !walkInEmail || !walkInName || Object.keys(fieldErrors).length > 0;
+  const nameError = walkInName ? fieldErrors.fullName : undefined;
+  const emailError = walkInEmail ? fieldErrors.email : undefined;
+  const cidError = walkInCid ? fieldErrors.cid : undefined;
 
   function reset() {
     setOpen(false);
@@ -91,31 +101,38 @@ export function AddAttendee({
   }
 
   function handleCreateWalkIn() {
-    if (!walkInEmail || !walkInName) return;
+    if (walkInInvalid) return;
     startTransition(async () => {
       try {
-        const { personId, reusedExisting } = await createWalkIn(clubSlug, {
+        const result = await createWalkIn(clubSlug, {
           sessionId,
           email: walkInEmail,
           fullName: walkInName,
           cid: walkInCid || undefined,
         });
+        if ("error" in result) {
+          // The server is the authority; its validation message is readable.
+          toast.error(`Couldn't add walk-in — ${result.error}`);
+          return;
+        }
+        const { personId, reusedExisting } = result;
+        const displayName = walkInName.trim().replace(/\s+/g, " ");
         onAdded({
           attendanceRecordId: crypto.randomUUID(),
           personId,
-          fullName: walkInName,
+          fullName: displayName,
           email: walkInEmail,
           attended: true,
           source: reusedExisting ? "manual_tick" : "walk_in",
         });
         toast.success(
           reusedExisting
-            ? `${walkInName} already existed with that email — added to this session instead of creating a duplicate`
-            : `Added ${walkInName} as a walk-in`
+            ? `${displayName} already existed with that email or CID — added to this session instead of creating a duplicate`
+            : `Added ${displayName} as a walk-in`
         );
         reset();
       } catch {
-        toast.error("Couldn't add walk-in — check the email is valid");
+        toast.error("Couldn't add walk-in — please try again");
       }
     });
   }
@@ -177,7 +194,18 @@ export function AddAttendee({
           <div className="flex flex-col gap-3 border-t pt-4">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="walkin-name">Full name</Label>
-              <Input id="walkin-name" value={walkInName} onChange={(e) => setWalkInName(e.target.value)} />
+              <Input
+                id="walkin-name"
+                value={walkInName}
+                onChange={(e) => setWalkInName(e.target.value)}
+                aria-invalid={!!nameError}
+                aria-describedby={nameError ? "walkin-name-error" : undefined}
+              />
+              {nameError && (
+                <p id="walkin-name-error" className="text-sm text-destructive">
+                  {nameError}
+                </p>
+              )}
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="walkin-email">Email (required)</Label>
@@ -186,7 +214,14 @@ export function AddAttendee({
                 type="email"
                 value={walkInEmail}
                 onChange={(e) => setWalkInEmail(e.target.value)}
+                aria-invalid={!!emailError}
+                aria-describedby={emailError ? "walkin-email-error" : undefined}
               />
+              {emailError && (
+                <p id="walkin-email-error" className="text-sm text-destructive">
+                  {emailError}
+                </p>
+              )}
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="walkin-cid">CID (optional — external/non-member guests won&apos;t have one)</Label>
@@ -194,9 +229,17 @@ export function AddAttendee({
                 id="walkin-cid"
                 value={walkInCid}
                 onChange={(e) => setWalkInCid(e.target.value)}
+                inputMode="numeric"
+                aria-invalid={!!cidError}
+                aria-describedby={cidError ? "walkin-cid-error" : undefined}
               />
+              {cidError && (
+                <p id="walkin-cid-error" className="text-sm text-destructive">
+                  {cidError}
+                </p>
+              )}
             </div>
-            <Button onClick={handleCreateWalkIn} disabled={isPending || !walkInEmail || !walkInName} className="self-start">
+            <Button onClick={handleCreateWalkIn} disabled={isPending || walkInInvalid} className="self-start">
               Add walk-in
             </Button>
           </div>

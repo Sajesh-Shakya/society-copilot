@@ -4,6 +4,7 @@ import { getEactivitiesCredentials } from "@/lib/eactivities/credentials";
 import type { Attendee } from "@/lib/eactivities/types";
 import { escapeIlikePattern, normalizeCid } from "@/lib/utils";
 import { reapplyWaiversForPerson } from "@/lib/purchase/interface";
+import { applyCidEvidence } from "@/lib/identity/apply-cid-evidence";
 
 export class SessionNotBoundError extends Error {
   constructor(sessionId: string) {
@@ -69,19 +70,19 @@ async function findOrCreatePerson(
     .ilike("email", escapeIlikePattern(email))
     .maybeSingle();
   if (byEmail) {
-    // Backfill, never overwrite -- same rule as the CSV-import path (see
-    // lib/csv-import/importer.ts's findOrCreatePersonByEmail).
-    if (cid && !(byEmail as unknown as { cid?: string | null }).cid) {
-      const { error: backfillError } = await scoped.from("person").update({ cid }).eq("id", (byEmail as unknown as { id: string }).id);
-      if (backfillError) throw backfillError;
-    }
-    return { id: (byEmail as unknown as { id: string }).id, created: false };
+    const personId = (byEmail as unknown as { id: string }).id;
+    // No one holds this CID (the CID lookup above missed), so the person's
+    // stored CID is missing or different: SSO evidence goes through the trust
+    // rule (fill, overwrite a lower-ranked CID, or flag an equal-ranked clash).
+    if (cid) await applyCidEvidence(scoped, personId, cid, "sso");
+    return { id: personId, created: false };
   }
 
   const { data: created, error } = await scoped
     .from("person")
     .insert({
       cid,
+      cid_source: cid ? "sso" : null,
       shortcode: attendee.Login,
       email: attendee.Email,
       full_name: `${attendee.FirstName} ${attendee.Surname}`.trim(),

@@ -1,5 +1,12 @@
 import { test, expect } from "@playwright/test";
-import { walkInSchema, CID_ERROR, NAME_ERROR } from "@/lib/identity/walk-in-schema";
+import {
+  walkInSchema,
+  validateWalkInFields,
+  firstWalkInError,
+  CID_ERROR,
+  NAME_ERROR,
+  EMAIL_ERROR,
+} from "@/lib/identity/walk-in-schema";
 
 const base = {
   sessionId: "7b0c1f2e-3d4a-4b5c-8d6e-9f0a1b2c3d4e",
@@ -69,5 +76,35 @@ test.describe("walkInSchema other fields", () => {
 
   test("rejects a non-uuid sessionId", () => {
     expect(walkInSchema.safeParse({ ...base, sessionId: "x" }).success).toBe(false);
+  });
+});
+
+test.describe("validateWalkInFields", () => {
+  test("returns no errors for valid fields", () => {
+    expect(
+      validateWalkInFields({ email: "sean@example.com", fullName: "Sean Rawlins", cid: "6113211" }),
+    ).toEqual({});
+  });
+
+  test("empty cid is fine", () => {
+    expect(
+      validateWalkInFields({ email: "sean@example.com", fullName: "Sean Rawlins", cid: "" }),
+    ).toEqual({});
+  });
+
+  test("returns the shared messages per field", () => {
+    expect(validateWalkInFields({ email: "nope", fullName: "Sean", cid: "12345" })).toEqual({
+      email: EMAIL_ERROR,
+      fullName: NAME_ERROR,
+      cid: CID_ERROR,
+    });
+  });
+});
+
+test.describe("firstWalkInError", () => {
+  test("gives the first issue's message", () => {
+    const r = walkInSchema.safeParse({ ...base, fullName: "Sean" });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(firstWalkInError(r.error)).toBe(NAME_ERROR);
   });
 });
