@@ -10,12 +10,11 @@ import { listRecentUploads } from '@/lib/purchase/interface';
 import { clubPath } from '@/lib/club-path';
 
 export const dynamic = 'force-dynamic';
-// Server Actions used on this page (uploadXlsx) inherit this limit. 60 is a
-// conservative value; if the Vercel plan / Fluid Compute setup allows longer
-// it should be raised. A first-time upload of ~5,000 matched rows measured
-// ~120s on dev, which exceeds 60. The project's actual plan/Fluid setting is
-// NOT VERIFIED -- the user should check it.
-export const maxDuration = 60;
+// Server Actions used on this page (uploadXlsx) inherit this limit. 300 s is
+// the project's Default Max Duration in Vercel (confirmed by the user). A
+// first-time upload of ~5,000 matched rows measured ~120 s on dev, so this
+// leaves ~2.5x headroom; roughly 12,000 matched rows is the extrapolated ceiling.
+export const maxDuration = 300;
 
 export default async function AdminPurchasesPage({
   params,

@@ -324,10 +324,8 @@ identity — a per-club sender display name/domain hasn't been built.
   ~1.3 MB, over the 1 MB default; 4 MB is meant to stay under Vercel's
   documented ~4.5 MB function request limit, which is not verified in
   this repo).
-  The purchases page sets `maxDuration = 60`, a conservative value valid on
-  every plan; on a plan / Fluid Compute setup allowing longer it should be
-  raised. The project's actual plan/Fluid setting is NOT VERIFIED and is
-  for the user to check. Neither the uploader
+  The purchases page sets `maxDuration = 300`, matching the Default Max
+  Duration the user confirmed in Vercel (2026-11-15). Neither the uploader
   component nor `uploadXlsx` enforces its own file-size cap.
 - **Measurements** (dev Supabase project, run from this dev machine, so
   network latency differs from the deployed app; 5,000-row synthetic
@@ -343,11 +341,26 @@ identity — a per-club sender display name/domain hasn't been built.
   purchase follow-ups for matched people (an `is_student` update and an
   `apply_purchase_waiver` RPC each, concurrency 5, ~47 ms per matched
   purchase). A first-time upload of ~5,000 matched rows (~120 s measured
-  on dev) exceeds `maxDuration = 60` and would time out unless the plan
-  allows a longer duration; roughly 1,000 matched rows or fewer fit
-  (extrapolated from the above, not measured). Batching the follow-ups
-  (one set-based waiver call per upload) is the next step if exports
-  that large are expected.
+  on dev) fits inside `maxDuration = 300` with ~2.5x headroom; roughly
+  12,000 matched rows is the extrapolated ceiling (not measured).
+  Batching the follow-ups (one set-based waiver call per upload) is the
+  next step if exports that large are expected.
+- **Idea for later: client-side pre-processing / batching (not built)**.
+  The user asked whether the browser could hash and pre-filter rows before
+  upload. Assessment: sending fewer bytes would not help, because the
+  file is small (~1.3 MB for 5,000 rows), parsing takes ~0.14 s, and a
+  re-upload of an already-ingested file already finishes in ~2.5 s via the
+  server-side hash pre-filter. The ~120 s is server work on genuinely new
+  rows (inserts plus per-purchase follow-ups). What would help is
+  client-driven batching: parse the XLSX in the browser, ask the server
+  which hashes already exist, then send only the new rows in batches of
+  roughly 500-1,000, each its own Server Action call with a progress bar.
+  Each call then stays well under any `maxDuration`, a timeout loses at
+  most one batch, and the limit stops mattering for large exports. Cost:
+  XLSX parsing moves to (or is duplicated in) the client, and the batches
+  of one upload must still share one `purchase_upload` row. Worth doing
+  only if exports grow beyond ~10,000 matched rows or the plan limit
+  drops.
 - **Timeout behaviour**: follow-ups now run per chunk (200 rows), with one
   person's purchases strictly sequential and different people in up to 5
   lanes. A timed-out upload therefore loses at most the in-flight chunk's
@@ -544,8 +557,9 @@ project (the dev project) with a throwaway club, admin and auth user.
   `resetClubData` with an FK error or skewing counts.
 - **NOT VERIFIED (these specs do not and cannot show)**:
   - Vercel function region vs Supabase region (latency between them).
-  - The plan's / Fluid Compute `maxDuration` limit (the purchases page sets
-    60 s; the real allowance is unconfirmed).
+  - That the deployed function actually honours the 300 s page setting
+    (the user confirmed the project default is 300 s; not tested by a
+    real long upload).
   - Real-export upload timing on the deployed app (the ~5,000-row upload).
   - The email / Resend path (invites, chase emails): never sent in tests.
 
