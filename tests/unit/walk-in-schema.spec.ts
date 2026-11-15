@@ -6,6 +6,8 @@ import {
   CID_ERROR,
   NAME_ERROR,
   EMAIL_ERROR,
+  NAME_TOO_LONG_ERROR,
+  EMAIL_TOO_LONG_ERROR,
 } from "@/lib/identity/walk-in-schema";
 
 const base = {
@@ -76,6 +78,53 @@ test.describe("walkInSchema other fields", () => {
 
   test("rejects a non-uuid sessionId", () => {
     expect(walkInSchema.safeParse({ ...base, sessionId: "x" }).success).toBe(false);
+  });
+});
+
+test.describe("walkInSchema length caps", () => {
+  /** Two words, `length` characters in total. */
+  function nameOfLength(length: number): string {
+    return `Sean ${"r".repeat(length - 5)}`;
+  }
+
+  /** A valid address exactly `length` characters long (length >= 190). */
+  function emailOfLength(length: number): string {
+    const local = "a".repeat(64);
+    const labels = `${"b".repeat(60)}.${"c".repeat(60)}.${"d".repeat(60)}.`;
+    const tld = "e".repeat(length - local.length - 1 - labels.length);
+    return `${local}@${labels}${tld}`;
+  }
+
+  test("a 200-character name is accepted", () => {
+    expect(nameOfLength(200)).toHaveLength(200);
+    expect(walkInSchema.safeParse({ ...base, fullName: nameOfLength(200) }).success).toBe(true);
+  });
+
+  test("a 201-character name is rejected with the too-long message", () => {
+    const r = walkInSchema.safeParse({ ...base, fullName: nameOfLength(201) });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0].message).toBe(NAME_TOO_LONG_ERROR);
+  });
+
+  test("the name cap applies after whitespace is collapsed", () => {
+    const padded = `  Sean    ${"r".repeat(195)}  `;
+    expect(walkInSchema.safeParse({ ...base, fullName: padded }).success).toBe(true);
+  });
+
+  test("a 254-character email is accepted", () => {
+    expect(emailOfLength(254)).toHaveLength(254);
+    expect(walkInSchema.safeParse({ ...base, email: emailOfLength(254) }).success).toBe(true);
+  });
+
+  test("a 255-character email is rejected with the too-long message", () => {
+    expect(emailOfLength(255)).toHaveLength(255);
+    const r = walkInSchema.safeParse({ ...base, email: emailOfLength(255) });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues.map((i) => i.message)).toContain(EMAIL_TOO_LONG_ERROR);
+  });
+
+  test("error text is exact", () => {
+    expect(NAME_TOO_LONG_ERROR).toBe("Name is too long");
   });
 });
 

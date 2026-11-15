@@ -38,15 +38,18 @@ export function AddAttendee({
   const [walkInEmail, setWalkInEmail] = useState("");
   const [walkInName, setWalkInName] = useState("");
   const [walkInCid, setWalkInCid] = useState("");
+  // Email errors wait until the field is left (or a submit is attempted), so
+  // a half-typed address isn't flagged on the first keystroke.
+  const [emailTouched, setEmailTouched] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   // Same schema the server action parses with, so the messages match. Name
-  // and CID errors show as soon as something is typed; email's only once it
-  // is non-empty (the browser's type="email" covers the rest).
+  // and CID errors show as soon as something is typed; email's once the field
+  // is non-empty and has been blurred (or a submit was attempted).
   const fieldErrors = validateWalkInFields({ email: walkInEmail, fullName: walkInName, cid: walkInCid });
   const walkInInvalid = !walkInEmail || !walkInName || Object.keys(fieldErrors).length > 0;
   const nameError = walkInName ? fieldErrors.fullName : undefined;
-  const emailError = walkInEmail ? fieldErrors.email : undefined;
+  const emailError = walkInEmail && emailTouched ? fieldErrors.email : undefined;
   const cidError = walkInCid ? fieldErrors.cid : undefined;
 
   function reset() {
@@ -57,6 +60,7 @@ export function AddAttendee({
     setWalkInEmail("");
     setWalkInName("");
     setWalkInCid("");
+    setEmailTouched(false);
   }
 
   function handleSearch(value: string) {
@@ -101,12 +105,14 @@ export function AddAttendee({
   }
 
   function handleCreateWalkIn() {
+    setEmailTouched(true);
     if (walkInInvalid) return;
+    const email = walkInEmail.trim();
     startTransition(async () => {
       try {
         const result = await createWalkIn(clubSlug, {
           sessionId,
-          email: walkInEmail,
+          email,
           fullName: walkInName,
           cid: walkInCid || undefined,
         });
@@ -121,7 +127,7 @@ export function AddAttendee({
           attendanceRecordId: crypto.randomUUID(),
           personId,
           fullName: displayName,
-          email: walkInEmail,
+          email,
           attended: true,
           source: reusedExisting ? "manual_tick" : "walk_in",
         });
@@ -214,6 +220,7 @@ export function AddAttendee({
                 type="email"
                 value={walkInEmail}
                 onChange={(e) => setWalkInEmail(e.target.value)}
+                onBlur={() => setEmailTouched(true)}
                 aria-invalid={!!emailError}
                 aria-describedby={emailError ? "walkin-email-error" : undefined}
               />

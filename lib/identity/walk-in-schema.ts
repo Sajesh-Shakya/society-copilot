@@ -4,6 +4,12 @@ import { normalizeCid } from "@/lib/utils";
 export const CID_ERROR = "CID is 8 digits, or 7 if you leave off the leading 0";
 export const NAME_ERROR = "Enter first name and surname";
 export const EMAIL_ERROR = "Enter a valid email address";
+export const NAME_TOO_LONG_ERROR = "Name is too long";
+export const EMAIL_TOO_LONG_ERROR = "Email is too long";
+/** Checked after whitespace is collapsed. */
+export const NAME_MAX = 200;
+/** RFC 5321 path limit. */
+export const EMAIL_MAX = 254;
 
 const cidField = z
   .string()
@@ -21,11 +27,16 @@ const fullNameField = z
       return words.length >= 2 && words.every((w) => /\p{L}/u.test(w));
     },
     { message: NAME_ERROR },
-  );
+  )
+  .refine((v) => v.length <= NAME_MAX, { message: NAME_TOO_LONG_ERROR });
 
 export const walkInSchema = z.object({
   sessionId: z.string().uuid(),
-  email: z.string().trim().email({ message: EMAIL_ERROR }),
+  email: z
+    .string()
+    .trim()
+    .max(EMAIL_MAX, { message: EMAIL_TOO_LONG_ERROR })
+    .email({ message: EMAIL_ERROR }),
   fullName: fullNameField,
   cid: cidField,
 });
