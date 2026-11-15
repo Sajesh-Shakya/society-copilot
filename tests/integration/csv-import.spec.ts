@@ -17,6 +17,23 @@ test.beforeAll(async () => {
   judoClubId = data.id;
 });
 
+/**
+ * Deletes test people, removing their identity conflict rows first (the CSV
+ * import records conflicts, and those rows' FKs would block the delete).
+ * Throws if anything is left, so a leak fails loudly instead of piling up.
+ */
+async function deletePeople(ids: string[]) {
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    for (const col of ["person_id", "other_person_id"]) {
+      const { error } = await admin.from("person_identity_conflict").delete().in(col, chunk);
+      if (error) throw error;
+    }
+    const { error } = await admin.from("person").delete().in("id", chunk);
+    if (error) throw error;
+  }
+}
+
 function row(overrides: Partial<AttendeeRow> = {}): AttendeeRow {
   return {
     firstName: "Csv",
@@ -58,7 +75,7 @@ test.describe("importAttendanceCsv", () => {
       sessionIds = [];
     }
     if (personIds.length > 0) {
-      await admin.from("person").delete().in("id", personIds);
+      await deletePeople(personIds);
       personIds = [];
     }
   });
@@ -429,7 +446,7 @@ test.describe("syncAttendanceCsv", () => {
       sessionIds = [];
     }
     if (personIds.length > 0) {
-      await admin.from("person").delete().in("id", personIds);
+      await deletePeople(personIds);
       personIds = [];
     }
   });
