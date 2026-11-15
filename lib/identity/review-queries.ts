@@ -101,6 +101,7 @@ export async function countOpenConflicts(clubId: string): Promise<number> {
   const { count, error } = await scoped
     .from("person_identity_conflict")
     .select("id", { count: "exact", head: true })
+    .eq("outcome", "flagged")
     .eq("status", "open");
   if (error) throw new Error(`Failed to count open conflicts: ${error.message}`);
   return count ?? 0;

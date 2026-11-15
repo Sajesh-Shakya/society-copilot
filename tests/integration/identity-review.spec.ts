@@ -12,7 +12,10 @@ import {
   listSameNameGroups,
 } from "@/lib/identity/review-queries";
 import {
+  __testing,
   CID_TAKEN,
+  PARTIAL_CID_MOVE,
+  PERSON_CHANGED,
   dismissSameNameGroup,
   keepCurrent,
   takeCidFromHolder,
@@ -152,6 +155,7 @@ test.beforeAll(async () => {
 });
 
 test.afterEach(async () => {
+  __testing.setHook(null);
   if (sessionIds.length > 0) {
     await admin.from("attendance_record").delete().in("session_id", sessionIds);
     await admin.from("session").delete().in("id", sessionIds);
@@ -291,6 +295,80 @@ test.describe("open conflicts", () => {
     await expect(takeCidFromHolder(judoClubId, conflictId, ADMIN_EMAIL)).rejects.toThrow();
     expect((await conflictsFor(personId))[0].status).toBe("open");
     expect((await listOpenConflicts(judoClubId)).some((c) => c.id === conflictId)).toBe(false);
+  });
+});
+
+test.describe("resolution safety", () => {
+  async function setCid(personId: string, cid: string, source: CidSource) {
+    const { error } = await admin.from("person").update({ cid, cid_source: source }).eq("id", personId);
+    if (error) throw error;
+  }
+
+  test("a person whose CID changed after the flag: useIncoming and takeCidFromHolder refuse, nothing written", async () => {
+    const incoming = testCid("s1");
+    const holderId = await insertPerson({ cid: incoming, cidSource: "walk_in" });
+    const { personId, conflictId } = await flagged(incoming, "sso");
+    const changed = testCid("s1c");
+    await setCid(personId, changed, "sso");
+
+    await expect(useIncoming(judoClubId, conflictId, ADMIN_EMAIL)).rejects.toThrow(PERSON_CHANGED);
+    await expect(takeCidFromHolder(judoClubId, conflictId, ADMIN_EMAIL)).rejects.toThrow(PERSON_CHANGED);
+
+    expect(await getPerson(personId)).toEqual({ cid: changed, cid_source: "sso" });
+    expect(await getPerson(holderId)).toEqual({ cid: incoming, cid_source: "walk_in" });
+    expect((await conflictsFor(personId))[0].status).toBe("open");
+    expect(await conflictsFor(holderId)).toHaveLength(0);
+  });
+
+  test("a thrown error after the vacate restores the holder, reopens the conflict and leaves no overwritten row", async () => {
+    const incoming = testCid("s2");
+    const holderId = await insertPerson({ cid: incoming, cidSource: "walk_in" });
+    const { personId, conflictId, existing } = await flagged(incoming, "sso");
+    __testing.setHook(async (point) => {
+      if (point === "afterVacate") throw new Error("simulated network failure");
+    });
+
+    await expect(takeCidFromHolder(judoClubId, conflictId, ADMIN_EMAIL)).rejects.toThrow("simulated network failure");
+
+    expect(await getPerson(holderId)).toEqual({ cid: incoming, cid_source: "walk_in" });
+    expect((await getPerson(personId)).cid).toBe(existing);
+    const [original] = await conflictsFor(personId);
+    expect(original).toMatchObject({ status: "open", resolved_by: null, resolved_at: null });
+    expect(await conflictsFor(holderId)).toHaveLength(0);
+  });
+
+  test("when the holder cannot be restored the overwritten row is kept and the error says so", async () => {
+    const incoming = testCid("s3");
+    const holderId = await insertPerson({ cid: incoming, cidSource: "walk_in" });
+    const { personId, conflictId, existing } = await flagged(incoming, "sso");
+    __testing.setHook(async (point) => {
+      if (point === "afterVacate") throw new Error("simulated network failure");
+      if (point === "beforeRestore") throw new Error("simulated restore failure");
+    });
+
+    await expect(takeCidFromHolder(judoClubId, conflictId, ADMIN_EMAIL)).rejects.toThrow(PARTIAL_CID_MOVE);
+
+    expect(await getPerson(holderId)).toEqual({ cid: null, cid_source: null });
+    expect((await getPerson(personId)).cid).toBe(existing);
+    const holderRows = await conflictsFor(holderId);
+    expect(holderRows).toHaveLength(1);
+    expect(holderRows[0]).toMatchObject({ outcome: "overwritten", existing_cid: incoming, incoming_cid: incoming });
+    // The person never got the CID, so the row must not name them as the taker.
+    expect(holderRows[0].other_person_id).toBeNull();
+    expect((await conflictsFor(personId))[0].status).toBe("open");
+  });
+
+  test("a thrown error during useIncoming's write reopens the conflict", async () => {
+    const incoming = testCid("s4");
+    const { personId, conflictId, existing } = await flagged(incoming);
+    __testing.setHook(async (point) => {
+      if (point === "beforeIncomingWrite") throw new Error("simulated network failure");
+    });
+
+    await expect(useIncoming(judoClubId, conflictId, ADMIN_EMAIL)).rejects.toThrow("simulated network failure");
+
+    expect((await getPerson(personId)).cid).toBe(existing);
+    expect((await conflictsFor(personId))[0]).toMatchObject({ status: "open", resolved_by: null });
   });
 });
 
