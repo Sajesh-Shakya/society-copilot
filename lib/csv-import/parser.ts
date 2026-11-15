@@ -8,9 +8,11 @@ export interface AttendeeRow {
   email: string;
   // Deliberately never used to MATCH/merge an existing person during CSV
   // import itself -- see the 2026-10-09 design doc's "Decisions already
-  // made" (email alone decides that). importer.ts does persist it onto
-  // person.cid (backfilling only, never overwriting) once a person is
-  // resolved, since this value has turned out to reliably be a real
+  // made" (email alone decides that). importer.ts does offer it to
+  // person.cid as `sso` evidence through the CID trust rule
+  // (lib/identity/cid-rule.ts: set, overwrite a lower-ranked CID, flag, or
+  // ignore) once a person is resolved, since this value has turned out to
+  // usually be a real
   // 8-digit Imperial CID in practice, not the ambiguous value the design
   // doc worried it might be -- that enables other subsystems (purchase
   // CID matching, see lib/purchase/matcher.ts) that had nothing to match

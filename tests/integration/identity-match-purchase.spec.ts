@@ -3,8 +3,9 @@ import { randomUUID } from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getOutstandingDebt } from "@/lib/debt/calculator";
 import { rematchUnmatchedPurchases } from "@/lib/purchase/interface";
-import { matchPurchaseToPerson } from "@/lib/identity/match-purchase";
+import { __testing, matchPurchaseToPerson } from "@/lib/identity/match-purchase";
 import { suggestPersonsForPurchase } from "@/lib/identity/suggestions";
+import { deleteClub, randomHex } from "../acceptance/support/db";
 
 // Exercises matchPurchaseToPerson / suggestPersonsForPurchase (the logic
 // behind the identity Server Actions, minus requireAdmin(), which needs a
@@ -145,6 +146,7 @@ test.beforeAll(async () => {
 });
 
 test.afterEach(async () => {
+  __testing.setHook(null);
   if (sessionIds.length > 0) {
     await admin.from("attendance_record").delete().in("session_id", sessionIds);
     await admin.from("session").delete().in("id", sessionIds);
@@ -270,6 +272,27 @@ test.describe("matchPurchaseToPerson", () => {
     expect(await conflictsFor(personId)).toHaveLength(0);
   });
 
+  test("a failure after the match lands returns success with a warning, and the match stands", async () => {
+    const oldCid = testCid();
+    const personId = await insertPerson({ cid: oldCid, cidSource: "walk_in" });
+    const productId = await insertProduct();
+    const purchaseId = await insertPurchase({ productId, rawCid: testCid() });
+    __testing.setHook(async (point) => {
+      if (point === "afterMatch") throw new Error("simulated network failure");
+    });
+
+    const result = await matchPurchaseToPerson(judoClubId, purchaseId, personId, { adoptCid: true }, ADMIN_EMAIL);
+    expect(result.matched).toBe(true);
+    expect(result.cid.decision).toBe("none");
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings?.[0]).toMatch(/^Matched, but/);
+
+    const purchase = await getPurchase(purchaseId);
+    expect(purchase.person_id).toBe(personId);
+    expect(purchase.match_status).toBe("manual_matched");
+    expect((await getPerson(personId)).cid).toBe(oldCid);
+  });
+
   test("an already-matched purchase is refused", async () => {
     const owner = await insertPerson({});
     const other = await insertPerson({});
@@ -309,21 +332,42 @@ test.describe("matchPurchaseToPerson", () => {
   });
 
   test("rematchUnmatchedPurchases never changes a manual_matched row", async () => {
-    // The purchase's CID belongs to a different person, so an automatic
-    // rematch would pick them if it ever looked at this row.
-    const cid = testCid();
-    const cidOwner = await insertPerson({ cid, cidSource: "sso" });
-    const chosen = await insertPerson({});
-    const productId = await insertProduct();
-    const purchaseId = await insertPurchase({ productId, rawCid: cid });
+    // rematch touches every unmatched purchase in a club, so this runs in a
+    // throwaway e2e- club (deleted below) and never against real judo rows.
+    const suffix = randomHex(4);
+    const { data: club, error: clubError } = await admin
+      .from("club")
+      .insert({ name: `E2E Identity Rematch ${suffix}`, slug: `e2e-${suffix}` })
+      .select("id")
+      .single();
+    if (clubError) throw clubError;
+    const clubId = club.id as string;
+    try {
+      // The purchase's CID belongs to a different person, so an automatic
+      // rematch would pick them if it ever looked at this row.
+      const cid = testCid();
+      const cidOwner = await insertPerson({ clubId, cid, cidSource: "sso" });
+      const chosen = await insertPerson({ clubId });
+      const productId = await insertProduct(clubId);
+      const purchaseId = await insertPurchase({ clubId, productId, rawCid: cid });
+      // Control: a still-unmatched purchase with the same CID, proving rematch
+      // did run and would have matched the manual row had it selected it.
+      const controlId = await insertPurchase({ clubId, productId, rawCid: cid });
 
-    await matchPurchaseToPerson(judoClubId, purchaseId, chosen, { adoptCid: false }, ADMIN_EMAIL);
-    await rematchUnmatchedPurchases(judoClubId);
+      await matchPurchaseToPerson(clubId, purchaseId, chosen, { adoptCid: false }, ADMIN_EMAIL);
+      const summary = await rematchUnmatchedPurchases(clubId);
+      expect(summary).toEqual({ matched: 1, stillUnmatched: 0 });
 
-    const purchase = await getPurchase(purchaseId);
-    expect(purchase.person_id).toBe(chosen);
-    expect(purchase.person_id).not.toBe(cidOwner);
-    expect(purchase.match_status).toBe("manual_matched");
+      const purchase = await getPurchase(purchaseId);
+      expect(purchase.person_id).toBe(chosen);
+      expect(purchase.person_id).not.toBe(cidOwner);
+      expect(purchase.match_status).toBe("manual_matched");
+      const control = await getPurchase(controlId);
+      expect(control.person_id).toBe(cidOwner);
+      expect(control.match_status).toBe("cid_matched");
+    } finally {
+      await deleteClub(clubId);
+    }
   });
 });
 

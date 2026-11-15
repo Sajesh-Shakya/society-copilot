@@ -424,8 +424,9 @@ Design: `docs/superpowers/specs/2026-11-14-identity-trust-and-duplicates-design.
   review, nothing written; lower rank → ignored (logged once). A CID already
   held by someone else is never taken automatically: it is flagged with the
   holder named. All four writers (CSV, sync, walk-in, manual match) go
-  through `lib/identity/apply-cid-evidence.ts`; every decision is logged in
-  `person_identity_conflict`.
+  through `lib/identity/apply-cid-evidence.ts`. Overwrite, flag and ignore
+  decisions are logged in `person_identity_conflict` (repeat flag/ignore of
+  the same disagreement only once); set and confirm are not logged.
 - **Where to review**: `/club/<slug>/admin/people-review` (linked from the
   sessions page as "People review", with a badge counting open conflicts).
   It shows open CID conflicts ("Keep current", "Use incoming" when the
@@ -446,10 +447,17 @@ Design: `docs/superpowers/specs/2026-11-14-identity-trust-and-duplicates-design.
   has "Match…", which opens an inline panel: suggestions (same email, or the
   only person with the same full name), each showing what adopting the
   purchase's CID would do; a name search; a "Use this purchase's CID for
-  them" checkbox (ticked by default only when the CID would fill a blank or
-  overwrite a lower-ranked one); confirm. The purchase becomes
-  `manual_matched` with `manual_matched_by/at` set and waivers re-applied.
-  "Re-check unmatched" never touches manual matches.
+  them" checkbox; confirm. For a suggestion the checkbox is ticked by
+  default only when the CID would fill a blank or overwrite a lower-ranked
+  one. For a name-search result (no effect is computed) it is ticked
+  whenever the person has no CID, even if someone else already holds that
+  CID, in which case confirming records a flag naming the holder instead
+  of setting it. The purchase becomes `manual_matched` with
+  `manual_matched_by/at` set and waivers re-applied. If a follow-up step
+  (student status, waivers, CID adoption) fails after the match is saved,
+  the match stands and the admin sees a warning instead of an error.
+  "Re-check unmatched" never touches manual matches (its update is guarded
+  on `match_status = 'unmatched'`).
 - **Backfill** (migration `20261115090000_identity_trust.sql`, applied to
   the dev project): people with a CID got `cid_source = 'walk_in'` if they
   were provisional or had only ever been seen as walk-in/manual ticks (no
@@ -461,13 +469,35 @@ Design: `docs/superpowers/specs/2026-11-14-identity-trust-and-duplicates-design.
   1. Manual matches are not remembered: a later purchase from the same
      buyer is matched by the automatic rules only (repeat "Match…"; the
      suggestion makes it two clicks).
-  2. A CSV row matched by CID does not raise a `walk_in`-source person's
-     source to `sso` (the CID owner is not put through the rule).
+  2. A row matched by CID, in either CSV import or live sync, does not
+     raise a `walk_in`-source person's source to `sso` (the CID owner is
+     not put through the rule). The two paths also differ on such a row:
+     CSV import offers the CID to the row's email owner (if a different
+     person) and so flags that person, while live sync returns the CID
+     owner straight away and does not flag the email owner.
   3. One-word names are only listed on the review page, not fixed.
   4. No merge tooling: a duplicate pair can be dismissed or have a CID
      moved, but not merged.
   5. The CSV batch writer does one update per changed person, and a failed
      vacate under a concurrent writer can still abort an import (rare).
+- **Follow-ups (not built)**:
+  1. CID shape check for CSV and purchase evidence: only treat 8-digit
+     CIDs as evidence. A library card number can also be 8 digits, so this
+     alone would not have prevented the original Ayaan case.
+  2. "Use incoming" and "Take this CID" changes do not appear in "Recent
+     changes" (only `overwritten` rows do, i.e. the holder's side of a take
+     and automatic overwrites).
+  3. Duplicated helpers: `guard`/`findHolder`/`loadPerson` exist in both
+     `lib/identity/apply-cid-evidence.ts` and `lib/identity/resolve.ts`, and
+     the `canTake` rank check in `review-queries.ts` repeats the one in
+     `resolve.ts`. Share them.
+  4. The CSV batch path downgrades a missed write guard directly to a
+     flag rather than re-evaluating the rule against the fresh row.
+  5. The migration must be applied before deploying this code:
+     `loadPersonIndex` selects `cid_source` and the sessions-page badge
+     reads `person_identity_conflict`.
+  6. A hard-killed integration run can leave `@example.test` people in the
+     real judo club (cleanup runs in `afterEach`). Sweep them by hand.
 - **Tests (2026-11-15)**: acceptance `tests/acceptance/identity.spec.ts`
   (5 tests: Ayaan end to end, manual match with CID, conflict "Keep
   current" and badge, same-name dismissal, walk-in validation). Full run:

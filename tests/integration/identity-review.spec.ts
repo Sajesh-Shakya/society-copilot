@@ -370,6 +370,30 @@ test.describe("resolution safety", () => {
     expect((await getPerson(personId)).cid).toBe(existing);
     expect((await conflictsFor(personId))[0]).toMatchObject({ status: "open", resolved_by: null });
   });
+
+  test("a failed write does not reopen a conflict someone else has changed in the meantime", async () => {
+    const incoming = testCid("s5");
+    const { personId, conflictId, existing } = await flagged(incoming);
+    const OTHER_ADMIN = "other-review-tester@example.test";
+    const otherAt = "2026-01-01T00:00:00.000Z";
+    __testing.setHook(async (point) => {
+      if (point !== "beforeIncomingWrite") return;
+      // Simulate a second admin overwriting the claim before our write fails.
+      const { error } = await admin
+        .from("person_identity_conflict")
+        .update({ status: "resolved", resolved_by: OTHER_ADMIN, resolved_at: otherAt })
+        .eq("id", conflictId);
+      if (error) throw error;
+      throw new Error("simulated network failure");
+    });
+
+    await expect(useIncoming(judoClubId, conflictId, ADMIN_EMAIL)).rejects.toThrow("simulated network failure");
+
+    expect((await getPerson(personId)).cid).toBe(existing);
+    const [row] = await conflictsFor(personId);
+    expect(row).toMatchObject({ status: "resolved", resolved_by: OTHER_ADMIN });
+    expect(new Date(row.resolved_at as string).toISOString()).toBe(otherAt);
+  });
 });
 
 test.describe("same-name groups and incomplete names", () => {

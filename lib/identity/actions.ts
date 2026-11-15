@@ -66,6 +66,8 @@ export async function matchPurchaseToPersonAction(
   const parsed = matchInputSchema.safeParse({ purchaseId, personId, adoptCid: options?.adoptCid });
   if (!parsed.success) return { error: "Invalid purchase or person." };
   try {
+    // A saved match whose follow-up steps failed comes back as a success
+    // carrying `warnings`; it is passed through unchanged for the client.
     return await matchPurchaseToPerson(
       clubId,
       parsed.data.purchaseId,

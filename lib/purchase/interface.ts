@@ -557,11 +557,16 @@ export async function rematchUnmatchedPurchases(clubId: string): Promise<Rematch
       continue;
     }
 
-    const { error: updateError } = await scoped
+    // Guarded on match_status so a concurrent manual match (or another
+    // rematch) that landed after the select above is never overwritten.
+    const { data: updated, error: updateError } = await scoped
       .from('purchase')
       .update({ person_id: result.personId, match_status: result.matchStatus })
-      .eq('id', p.id);
+      .eq('id', p.id)
+      .eq('match_status', 'unmatched')
+      .select('id');
     if (updateError) throw updateError;
+    if (!updated || updated.length === 0) continue; // matched by someone else meanwhile
 
     await applyWaivers(result.personId!, p.id);
     matched++;

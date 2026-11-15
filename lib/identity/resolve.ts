@@ -116,10 +116,11 @@ async function closeConflict(
   conflictId: string,
   status: "resolved" | "dismissed",
   by: string,
+  at: string = new Date().toISOString(),
 ): Promise<void> {
   const { data, error } = await scoped
     .from("person_identity_conflict")
-    .update({ status, resolved_by: by, resolved_at: new Date().toISOString() })
+    .update({ status, resolved_by: by, resolved_at: at })
     .eq("id", conflictId)
     .eq("outcome", "flagged")
     .eq("status", "open")
@@ -128,13 +129,21 @@ async function closeConflict(
   if (!data || data.length === 0) throw new Error(CONFLICT_NOT_OPEN);
 }
 
-/** Undoes closeConflict after a later step failed, so the conflict stays actionable. */
-async function reopenConflict(scoped: ScopedClient, conflictId: string): Promise<void> {
+/**
+ * Undoes this call's closeConflict after a later step failed, so the conflict
+ * stays actionable. Guarded on the row still being exactly what this call
+ * wrote (resolved, by this admin, at this timestamp), so a conflict someone
+ * else has since closed or changed is never reopened.
+ */
+async function reopenConflict(scoped: ScopedClient, conflictId: string, by: string, at: string): Promise<void> {
   const { error } = await scoped
     .from("person_identity_conflict")
     .update({ status: "open", resolved_by: null, resolved_at: null })
     .eq("id", conflictId)
-    .eq("outcome", "flagged");
+    .eq("outcome", "flagged")
+    .eq("status", "resolved")
+    .eq("resolved_by", by)
+    .eq("resolved_at", at);
   if (error) throw error;
 }
 
@@ -148,19 +157,20 @@ async function withConflictClaimed(
   by: string,
   apply: () => Promise<void>,
 ): Promise<void> {
+  const at = new Date().toISOString();
   try {
-    await closeConflict(scoped, conflictId, "resolved", by);
+    await closeConflict(scoped, conflictId, "resolved", by, at);
   } catch (err) {
     // A thrown (not guard-miss) close may have landed: make sure it is open.
     if (!(err instanceof Error && err.message === CONFLICT_NOT_OPEN)) {
-      await bestEffort("reopen conflict", () => reopenConflict(scoped, conflictId));
+      await bestEffort("reopen conflict", () => reopenConflict(scoped, conflictId, by, at));
     }
     throw err;
   }
   try {
     await apply();
   } catch (err) {
-    await bestEffort("reopen conflict", () => reopenConflict(scoped, conflictId));
+    await bestEffort("reopen conflict", () => reopenConflict(scoped, conflictId, by, at));
     throw err;
   }
 }

@@ -128,10 +128,19 @@ export function MatchPanel({
           toast.error(`Couldn't match — ${result.error}`);
           return;
         }
+        if (result.warnings && result.warnings.length > 0) {
+          toast.warning(result.warnings.join(" "));
+          onMatched();
+          return;
+        }
         const decision = result.cid.decision;
-        if (decision === "flag" || decision === "ignore") {
+        if (decision === "flag") {
           toast.success(
-            `Matched to ${person.fullName}. Their CID was kept; the CID conflict was recorded for review.`
+            `Matched to ${person.fullName}. Their CID was kept; the CID conflict was recorded for review on the People review page.`
+          );
+        } else if (decision === "ignore") {
+          toast.success(
+            `Matched to ${person.fullName}. Their better-sourced CID was kept (the difference was logged).`
           );
         } else if (decision === "set" || decision === "overwrite") {
           toast.success(`Matched to ${person.fullName} and saved the purchase's CID.`);

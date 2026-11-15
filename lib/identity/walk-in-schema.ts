@@ -41,8 +41,6 @@ export const walkInSchema = z.object({
   cid: cidField,
 });
 
-export type WalkInInput = z.infer<typeof walkInSchema>;
-
 /** The form's fields only (the form already knows the session). */
 const walkInFieldsSchema = walkInSchema.omit({ sessionId: true });
 
