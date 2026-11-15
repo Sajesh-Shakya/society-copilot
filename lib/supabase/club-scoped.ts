@@ -4,6 +4,8 @@ const CLUB_SCOPED_TABLES = [
   "person",
   "session",
   "session_series",
+  "person_identity_conflict",
+  "person_duplicate_dismissal",
   "product",
   "purchase",
   "purchase_upload",
