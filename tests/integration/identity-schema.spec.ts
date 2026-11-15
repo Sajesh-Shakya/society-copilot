@@ -108,10 +108,17 @@ test.describe("identity trust schema", () => {
     expect(second.error).not.toBeNull();
     expect(second.error!.code).toBe("23505");
 
-    const ignored = await admin.from("person_identity_conflict").insert(row("ignored"));
+    // flagged and ignored share one dedup key, so an ignored claim needs a
+    // different incoming CID from the flagged one above.
+    const ignoredRow = { ...row("ignored"), incoming_cid: "00000003" };
+    const ignored = await admin.from("person_identity_conflict").insert(ignoredRow);
     expect(ignored.error).toBeNull();
-    const ignoredAgain = await admin.from("person_identity_conflict").insert(row("ignored"));
+    const ignoredAgain = await admin.from("person_identity_conflict").insert(ignoredRow);
     expect(ignoredAgain.error!.code).toBe("23505");
+
+    // the same claim cannot be both flagged and ignored
+    const clash = await admin.from("person_identity_conflict").insert({ ...row("ignored"), incoming_cid: "00000002" });
+    expect(clash.error!.code).toBe("23505");
 
     const o1 = await admin.from("person_identity_conflict").insert(row("overwritten"));
     const o2 = await admin.from("person_identity_conflict").insert(row("overwritten"));
