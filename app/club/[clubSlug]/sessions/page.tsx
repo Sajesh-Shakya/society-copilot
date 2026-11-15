@@ -5,6 +5,7 @@ import { clubPath } from "@/lib/club-path";
 import { listRecentSessions } from "@/lib/attendance/queries";
 import { isInPrefetchWindow } from "@/lib/attendance/event-window";
 import { countFailedChaseEmails } from "@/lib/chase/queries";
+import { countOpenConflicts } from "@/lib/identity/review-queries";
 import { splitSessionsForDisplay } from "@/lib/attendance/list-display";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,9 +27,10 @@ export default async function SessionsIndexPage({
     throw error;
   }
 
-  const [sessions, failedChaseCount] = await Promise.all([
+  const [sessions, failedChaseCount, openConflictCount] = await Promise.all([
     listRecentSessions(clubId),
     countFailedChaseEmails(clubId),
+    countOpenConflicts(clubId),
   ]);
   const todaySessions = sessions.filter((s) => s.isToday);
   // `sessions` is newest-starting-first overall; for "what's coming up"
@@ -61,6 +63,12 @@ export default async function SessionsIndexPage({
           </Button>
           <Button asChild variant="ghost" size="sm">
             <PendingLink href={clubPath(clubSlug, "/admin/purchases")}>Purchases</PendingLink>
+          </Button>
+          <Button asChild variant="ghost" size="sm">
+            <PendingLink href={clubPath(clubSlug, "/admin/people-review")} className="flex items-center gap-2">
+              People review
+              {openConflictCount > 0 && <Badge variant="secondary">{openConflictCount} open</Badge>}
+            </PendingLink>
           </Button>
           <Button asChild variant="outline">
             <PendingLink href={clubPath(clubSlug, "/sessions/new")}>New session (eActivities)</PendingLink>

@@ -10,6 +10,20 @@ import {
   type MatchPurchaseResult,
 } from "@/lib/identity/match-purchase";
 import { suggestPersonsForPurchase, type PersonSuggestion } from "@/lib/identity/suggestions";
+import {
+  CID_TAKEN,
+  CONFLICT_NOT_FOUND,
+  CONFLICT_NOT_OPEN,
+  dismissSameNameGroup,
+  HOLDER_CHANGED,
+  HOLDER_NOT_OUTRANKED,
+  keepCurrent,
+  NO_OTHER_PERSON,
+  PERSON_CHANGED,
+  takeCidFromHolder,
+  // Aliased: the brief's name trips react-hooks/rules-of-hooks (it isn't a hook).
+  useIncoming as applyIncomingCid,
+} from "@/lib/identity/resolve";
 
 // Expected failures come back as { error } values: Next.js strips thrown
 // messages from Server Actions in production. Anything unexpected still
@@ -26,7 +40,18 @@ const USER_SAFE: Record<string, string> = {
   [PURCHASE_NOT_FOUND]: "That purchase no longer exists.",
   [PURCHASE_NOT_UNMATCHED]: "That purchase has already been matched.",
   [PERSON_NOT_FOUND]: "That person isn't in this club.",
+  [CONFLICT_NOT_FOUND]: "That conflict no longer exists.",
+  [CONFLICT_NOT_OPEN]: "That conflict has already been dealt with.",
+  [CID_TAKEN]: "That CID is now held by someone else.",
+  [NO_OTHER_PERSON]: "No one else holds that CID.",
+  [HOLDER_NOT_OUTRANKED]: "The other person's CID is just as trusted, so it can't be taken. Keep current instead.",
+  [HOLDER_CHANGED]: "The other person no longer holds that CID. Reload and try again.",
+  [PERSON_CHANGED]: "This person's CID changed in the meantime. Reload and try again.",
 };
+
+function userSafe(err: unknown): string | undefined {
+  return err instanceof Error ? USER_SAFE[err.message] : undefined;
+}
 
 export async function matchPurchaseToPersonAction(
   clubSlug: string,
@@ -65,4 +90,65 @@ export async function suggestPersonsAction(
     if (err instanceof Error && err.message === PURCHASE_NOT_FOUND) return { error: USER_SAFE[PURCHASE_NOT_FOUND] };
     throw err;
   }
+}
+
+const resolveInputSchema = z.object({
+  conflictId: idSchema,
+  resolution: z.enum(["keep_current", "use_incoming"]),
+});
+
+/** "Keep current" (dismiss) or "Use incoming" on an open CID conflict. */
+export async function resolveConflictAction(
+  clubSlug: string,
+  conflictId: string,
+  resolution: "keep_current" | "use_incoming",
+): Promise<{ ok: true } | { error: string }> {
+  const { clubId, email } = await requireAdmin(clubSlug);
+  const parsed = resolveInputSchema.safeParse({ conflictId, resolution });
+  if (!parsed.success) return { error: "Invalid conflict." };
+  try {
+    if (parsed.data.resolution === "keep_current") await keepCurrent(clubId, parsed.data.conflictId, email);
+    else await applyIncomingCid(clubId, parsed.data.conflictId, email);
+    return { ok: true };
+  } catch (err) {
+    const safe = userSafe(err);
+    if (safe) return { error: safe };
+    throw err;
+  }
+}
+
+/** "Take this CID from the other person" on an open CID conflict. */
+export async function takeCidFromOtherPersonAction(
+  clubSlug: string,
+  conflictId: string,
+): Promise<{ ok: true } | { error: string }> {
+  const { clubId, email } = await requireAdmin(clubSlug);
+  const parsed = idSchema.safeParse(conflictId);
+  if (!parsed.success) return { error: "Invalid conflict." };
+  try {
+    await takeCidFromHolder(clubId, parsed.data, email);
+    return { ok: true };
+  } catch (err) {
+    const safe = userSafe(err);
+    if (safe) return { error: safe };
+    throw err;
+  }
+}
+
+const dismissInputSchema = z.object({
+  nameKey: z.string().min(1).max(500),
+  membersHash: z.string().regex(/^[0-9a-f]{40}$/),
+});
+
+/** "Not the same person" on a same-name group. */
+export async function dismissSameNameGroupAction(
+  clubSlug: string,
+  nameKey: string,
+  membersHash: string,
+): Promise<{ ok: true } | { error: string }> {
+  const { clubId, email } = await requireAdmin(clubSlug);
+  const parsed = dismissInputSchema.safeParse({ nameKey, membersHash });
+  if (!parsed.success) return { error: "Invalid group." };
+  await dismissSameNameGroup(clubId, parsed.data.nameKey, parsed.data.membersHash, email);
+  return { ok: true };
 }
