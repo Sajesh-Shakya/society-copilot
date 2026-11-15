@@ -54,10 +54,21 @@ function clubId() {
   return acceptanceContext().clubId;
 }
 
-export async function seedPerson(input: { fullName: string; email: string; cid?: string }): Promise<string> {
+export async function seedPerson(input: {
+  fullName: string;
+  email: string;
+  cid?: string;
+  cidSource?: "sso" | "purchase" | "walk_in";
+}): Promise<string> {
   const { data, error } = await adminDb
     .from("person")
-    .insert({ club_id: clubId(), full_name: input.fullName, email: input.email, cid: input.cid ?? null })
+    .insert({
+      club_id: clubId(),
+      full_name: input.fullName,
+      email: input.email,
+      cid: input.cid ?? null,
+      cid_source: input.cidSource ?? null,
+    })
     .select("id")
     .single();
   if (error) throw error;

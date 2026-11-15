@@ -46,6 +46,8 @@ const DATA_TABLES_IN_DELETE_ORDER = [
   "sync_cursor",
   "session",
   "session_series",
+  "person_identity_conflict",
+  "person_duplicate_dismissal",
   "person",
 ] as const;
 

@@ -411,6 +411,69 @@ identity — a per-club sender display name/domain hasn't been built.
   the single-session picker), and the visual layout / look of these screens
   on a phone. Check those by hand.
 
+## Identity trust and duplicates (2026-11-15, identity-trust)
+
+Design: `docs/superpowers/specs/2026-11-14-identity-trust-and-duplicates-design.md`.
+
+- **Ranking**: every stored CID has a source, `person.cid_source`, ranked
+  `sso` (CSV import, live eActivities sync) > `purchase` (manual match) >
+  `walk_in` (typed at the door). One pure rule (`lib/identity/cid-rule.ts`)
+  decides what to do with new CID evidence: blank → set; same CID → confirm
+  (and raise the source if the new one ranks higher); different CID from a
+  higher source → overwrite (logged as `overwritten`); equal rank → flag for
+  review, nothing written; lower rank → ignored (logged once). A CID already
+  held by someone else is never taken automatically: it is flagged with the
+  holder named. All four writers (CSV, sync, walk-in, manual match) go
+  through `lib/identity/apply-cid-evidence.ts`; every decision is logged in
+  `person_identity_conflict`.
+- **Where to review**: `/club/<slug>/admin/people-review` (linked from the
+  sessions page as "People review", with a badge counting open conflicts).
+  It shows open CID conflicts ("Keep current", "Use incoming" when the
+  incoming CID is free, "Take this CID from the other person" when the
+  incoming source outranks the holder's), a collapsed "Recent changes" list
+  (the last 30 overwrites), same-name groups (people sharing a trimmed,
+  case-folded full name, with a "Not the same person" dismissal that stops
+  applying if the group's members change), and "Names that look
+  incomplete" (one-word names).
+- **Walk-in validation** (form and server share
+  `lib/identity/walk-in-schema.ts`): full name must be at least two words,
+  each with a letter ("Enter first name and surname"); email required and
+  valid; CID optional, 7 or 8 digits after trimming ("CID is 8 digits, or 7
+  if you leave off the leading 0"), a 7-digit CID is stored with the
+  leading 0. Errors show inline and the submit button stays disabled until
+  the form is valid. New walk-ins with a CID get `cid_source = 'walk_in'`.
+- **Manual match**: on `/club/<slug>/admin/purchases` every unmatched row
+  has "Match…", which opens an inline panel: suggestions (same email, or the
+  only person with the same full name), each showing what adopting the
+  purchase's CID would do; a name search; a "Use this purchase's CID for
+  them" checkbox (ticked by default only when the CID would fill a blank or
+  overwrite a lower-ranked one); confirm. The purchase becomes
+  `manual_matched` with `manual_matched_by/at` set and waivers re-applied.
+  "Re-check unmatched" never touches manual matches.
+- **Backfill** (migration `20261115090000_identity_trust.sql`, applied to
+  the dev project): people with a CID got `cid_source = 'walk_in'` if they
+  were provisional or had only ever been seen as walk-in/manual ticks (no
+  `signup_sync`/`csv_import` attendance), otherwise `sso`; people without a
+  CID got null. On the dev project: 210 `sso`, 17 `walk_in`, 161 no CID.
+  Additive only; must be applied to any other Supabase project before
+  deploying this code.
+- **Known limitations**:
+  1. Manual matches are not remembered: a later purchase from the same
+     buyer is matched by the automatic rules only (repeat "Match…"; the
+     suggestion makes it two clicks).
+  2. A CSV row matched by CID does not raise a `walk_in`-source person's
+     source to `sso` (the CID owner is not put through the rule).
+  3. One-word names are only listed on the review page, not fixed.
+  4. No merge tooling: a duplicate pair can be dismissed or have a CID
+     moved, but not merged.
+  5. The CSV batch writer does one update per changed person, and a failed
+     vacate under a concurrent writer can still abort an import (rare).
+- **Tests (2026-11-15)**: acceptance `tests/acceptance/identity.spec.ts`
+  (5 tests: Ayaan end to end, manual match with CID, conflict "Keep
+  current" and badge, same-name dismissal, walk-in validation). Full run:
+  unit 158 passed, integration 257 passed, e2e 17 passed, acceptance 22
+  passed, `tsc --noEmit` clean.
+
 ## Acceptance tests
 
 Signed-in browser specs in `tests/acceptance/`, run against a real Supabase
@@ -424,7 +487,12 @@ project (the dev project) with a throwaway club, admin and auth user.
   (3 upcoming / 3 past, the rest folded); series delete keeping sessions
   with attendance; the purchases "Re-check unmatched" button (CID match
   turns an unmatched student purchase into `cid_matched`; a non-matching CID
-  stays unmatched).
+  stays unmatched); identity trust (`identity.spec.ts`: a CSV row replaces
+  a walk-in CID, shows in "Recent changes" and lets Re-check match the
+  student purchase; manual match from a suggestion with the purchase's CID;
+  a flagged conflict resolved with "Keep current" clears the sessions badge;
+  a same-name pair dismissed; walk-in form validation messages).
+- **Count**: 22 tests (2026-11-15), all passing.
 - **Run**: `npm run test:acceptance` starts its own dev server on port 3100
   and errors if that port is already taken (it never reuses a server).
   `ACCEPTANCE_BASE_URL=https://... npm run test:acceptance` targets a
