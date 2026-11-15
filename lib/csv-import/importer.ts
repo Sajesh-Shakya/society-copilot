@@ -2,6 +2,8 @@ import { z } from "zod";
 import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 import { normalizeCid } from "@/lib/utils";
 import { loadPersonIndex } from "@/lib/purchase/person-index";
+import { decideCidEvidence } from "@/lib/identity/cid-rule";
+import { applyCidEvidenceBatch, type CidEvidenceOp } from "@/lib/identity/apply-cid-evidence";
 import { optionalEndsAtSchema, endsAfterStart, endsAfterStartRefinement } from "@/lib/attendance/end-time";
 import type { AttendeeRow } from "./parser";
 
@@ -40,13 +42,21 @@ export interface ImportAttendanceCsvResult {
  * rejects two people sharing one, so a row signing up again under a
  * different email must resolve to the existing CID owner, not insert.
  *
- * When matched by email and the row carries a CID the person lacks, the CID
- * is backfilled (one update per affected person). Never overwrites an
- * existing cid or email -- whichever key found the match is trusted; the
- * other field a row carries is additional evidence only.
+ * A CSV CID is sso evidence and goes through the trust rule
+ * (decideCidEvidence), evaluated in memory in row order against the index,
+ * which is updated as it goes (an overwrite is visible to later rows):
+ *  - matched by email with a different or missing CID: set / overwrite a
+ *    lower-ranked CID / flag an equal-ranked clash;
+ *  - matched by CID while the row's email belongs to a different person:
+ *    that person is flagged (other_person_id = the CID owner), nothing
+ *    written. The CID owner itself needs no rule call.
+ * Decisions are applied by applyCidEvidenceBatch (one guarded update per
+ * changed person, vacate-before-claim, conflicts bulk-inserted). Emails are
+ * never overwritten.
  *
  * Rows that match nobody become new people (identity_confidence
- * "confirmed") created in ONE bulk insert. Within the file, a later row whose
+ * "confirmed", cid_source "sso" when they have a CID) created in ONE bulk
+ * insert. Within the file, a later row whose
  * CID or email equals an earlier would-be-new row maps to that same new
  * person (the old code found the just-inserted person the same way).
  */
@@ -64,7 +74,33 @@ export async function resolvePeopleForRows(clubId: string, rows: AttendeeRow[]):
   const pendingByEmail = new Map<string, number>();
   // Per row: either a resolved id or the index of a pending new person.
   const resolved: Array<{ id: string } | { pendingIdx: number }> = [];
-  const backfills = new Map<string, string>(); // person id -> cid
+  const ops: CidEvidenceOp[] = [];
+
+  // Evaluates this row's CID as sso evidence for `personId`, in memory, and
+  // applies a set/overwrite to the index at once so later rows see it (an
+  // overwrite releases the old CID for a later row to claim).
+  const evaluate = (personId: string, cid: string) => {
+    const existing = {
+      cid: index.cidById.get(personId) ?? null,
+      source: index.cidSourceById.get(personId) ?? null,
+    };
+    const holderId = index.byCid.get(cid);
+    const holder = holderId && holderId !== personId ? holderId : null;
+    let decision = decideCidEvidence(existing, { cid, source: "sso" }, holder ? { personId: holder } : null);
+    if (decision.kind === "confirm" && !decision.raiseSourceTo) return;
+    // The rule omits otherPersonId for equal-rank clashes; record any holder anyway.
+    if (decision.kind === "flag" && holder) decision = { kind: "flag", otherPersonId: holder };
+    ops.push({ personId, cid, source: "sso", decision, existing });
+
+    if (decision.kind === "set" || decision.kind === "overwrite") {
+      if (existing.cid && index.byCid.get(existing.cid) === personId) index.byCid.delete(existing.cid);
+      index.byCid.set(cid, personId);
+      index.cidById.set(personId, cid);
+      index.cidSourceById.set(personId, "sso");
+    } else if (decision.kind === "confirm") {
+      index.cidSourceById.set(personId, decision.raiseSourceTo);
+    }
+  };
 
   for (const row of rows) {
     const email = row.email.toLowerCase();
@@ -74,6 +110,10 @@ export async function resolvePeopleForRows(clubId: string, rows: AttendeeRow[]):
       const id = index.byCid.get(cid);
       if (id) {
         resolved.push({ id });
+        // The CID owner is trusted. If the row's email belongs to someone
+        // else, that person is claiming a CID another person holds: flag it.
+        const emailOwner = index.ambiguousEmails.has(email) ? undefined : index.byEmail.get(email);
+        if (emailOwner && emailOwner !== id) evaluate(emailOwner, cid);
         continue;
       }
       const pendingIdx = pendingByCid.get(cid);
@@ -90,11 +130,7 @@ export async function resolvePeopleForRows(clubId: string, rows: AttendeeRow[]):
     }
     const emailId = index.byEmail.get(email);
     if (emailId) {
-      if (cid && !index.cidById.get(emailId)) {
-        backfills.set(emailId, cid);
-        index.cidById.set(emailId, cid);
-        index.byCid.set(cid, emailId);
-      }
+      if (cid) evaluate(emailId, cid);
       resolved.push({ id: emailId });
       continue;
     }
@@ -116,10 +152,9 @@ export async function resolvePeopleForRows(clubId: string, rows: AttendeeRow[]):
     resolved.push({ pendingIdx });
   }
 
-  for (const [personId, cid] of backfills) {
-    const { error } = await scoped.from("person").update({ cid }).eq("id", personId);
-    if (error) throw error;
-  }
+  // Before inserting new people: an overwrite here may free a CID one of
+  // them claims.
+  await applyCidEvidenceBatch(scoped, ops);
 
   let createdIds: string[] = [];
   if (pending.length > 0) {
@@ -131,6 +166,7 @@ export async function resolvePeopleForRows(clubId: string, rows: AttendeeRow[]):
           full_name: p.fullName,
           identity_confidence: "confirmed",
           cid: p.cid,
+          cid_source: p.cid ? "sso" : null,
         }))
       )
       .select("id, email, cid");

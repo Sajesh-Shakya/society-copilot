@@ -1,5 +1,6 @@
 import { createClubScopedClient } from '@/lib/supabase/club-scoped';
 import { normalizeCid } from '@/lib/utils';
+import type { CidSource } from '@/lib/identity/cid-rule';
 import { RawPurchaseRow, MatchResult, isStudentMemberType } from './types';
 
 export interface PersonIndex {
@@ -7,6 +8,7 @@ export interface PersonIndex {
   byEmail: Map<string, string>;
   byName: Map<string, string[]>;
   cidById: Map<string, string | null>;
+  cidSourceById: Map<string, CidSource | null>;
   // Keys shared by 2+ people. Removed from byCid/byEmail so they never match,
   // mirroring the old maybeSingle() error path (error ignored -> no match).
   ambiguousCids: Set<string>;
@@ -16,6 +18,9 @@ export interface PersonIndex {
 export interface PersonIndexRow {
   id: string;
   cid: string | null;
+  // Optional so callers building an index without trust data (matcher
+  // fixtures) need not supply it; absent means unknown (null).
+  cid_source?: CidSource | null;
   email: string | null;
   full_name: string;
 }
@@ -41,11 +46,13 @@ export function buildPersonIndex(people: PersonIndexRow[]): PersonIndex {
     byEmail: new Map(),
     byName: new Map(),
     cidById: new Map(),
+    cidSourceById: new Map(),
     ambiguousCids: new Set(),
     ambiguousEmails: new Set(),
   };
   for (const p of people) {
     index.cidById.set(p.id, p.cid);
+    index.cidSourceById.set(p.id, p.cid_source ?? null);
     if (p.cid) addUnique(index.byCid, index.ambiguousCids, p.cid, p.id);
     if (p.email) addUnique(index.byEmail, index.ambiguousEmails, p.email.toLowerCase(), p.id);
     const nameKey = p.full_name.trim().toLowerCase();
@@ -76,7 +83,7 @@ export async function loadPersonIndex(clubId: string): Promise<PersonIndex> {
   const rows = await fetchAllPages<PersonIndexRow>(async (from, to) => {
     const { data, error } = await scoped
       .from('person')
-      .select('id, cid, email, full_name')
+      .select('id, cid, cid_source, email, full_name')
       .order('id')
       .range(from, to);
     if (error) throw new Error(`Failed to load people: ${error.message}`);

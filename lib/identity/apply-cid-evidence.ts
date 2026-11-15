@@ -1,5 +1,14 @@
 import { decideCidEvidence, type CidDecision, type CidSource } from "@/lib/identity/cid-rule";
-import { recordConflict, UNIQUE_VIOLATION, type ScopedClient } from "@/lib/identity/conflicts";
+import {
+  conflictDedupKey,
+  recordConflict,
+  toConflictInsert,
+  UNIQUE_VIOLATION,
+  type ConflictRow,
+  type IdentityOutcome,
+  type ScopedClient,
+} from "@/lib/identity/conflicts";
+import { chunk } from "@/lib/chunk";
 
 const MAX_ATTEMPTS = 3;
 
@@ -151,6 +160,183 @@ async function run(
     outcome: "flagged",
   });
   return { decision: "flag", cidChanged: false };
+}
+
+/** One planned CID decision, made in memory by a bulk caller (the CSV import). */
+export interface CidEvidenceOp {
+  personId: string;
+  cid: string;
+  source: CidSource;
+  decision: CidDecision;
+  /** The person's CID state the decision was based on; writes are guarded on it. */
+  existing: { cid: string | null; source: CidSource | null };
+}
+
+const IN_LIST_CHUNK = 100;
+const CONFLICT_INSERT_CHUNK = 500;
+const WRITE_CONCURRENCY = 10;
+
+function isClaim(op: CidEvidenceOp): boolean {
+  return op.decision.kind === "set" || op.decision.kind === "overwrite";
+}
+
+function isWrite(op: CidEvidenceOp): boolean {
+  return isClaim(op) || (op.decision.kind === "confirm" && op.decision.raiseSourceTo !== null);
+}
+
+/**
+ * Orders writes so that an update vacating a CID lands before the update that
+ * claims it (the unique (club_id, cid) index would otherwise reject the
+ * claim). Returns waves: no op in a wave claims a CID that a not-yet-applied
+ * op still holds, so a wave's writes are independent of each other. A cycle
+ * (not producible by sequential in-memory evaluation) is emitted as a final
+ * wave; its collisions downgrade to flags.
+ */
+function orderVacatesFirst(writes: CidEvidenceOp[]): CidEvidenceOp[][] {
+  const waves: CidEvidenceOp[][] = [];
+  let pending = writes;
+  while (pending.length > 0) {
+    const stillHeld = new Set(
+      pending.filter((op) => op.decision.kind === "overwrite" && op.existing.cid).map((op) => op.existing.cid),
+    );
+    const ready = pending.filter((op) => !isClaim(op) || !stillHeld.has(op.cid));
+    if (ready.length === 0) {
+      waves.push(pending);
+      break;
+    }
+    waves.push(ready);
+    const readySet = new Set(ready);
+    pending = pending.filter((op) => !readySet.has(op));
+  }
+  return waves;
+}
+
+/** One guarded write; `null` when it landed, else the holder to flag against. */
+async function writeOp(
+  scoped: ScopedClient,
+  op: CidEvidenceOp,
+): Promise<null | { otherPersonId: string | null }> {
+  const values =
+    op.decision.kind === "confirm"
+      ? { cid_source: op.decision.raiseSourceTo }
+      : { cid: op.cid, cid_source: op.source };
+  let q = scoped.from("person").update(values).eq("id", op.personId);
+  q = guard(q, "cid", op.existing.cid);
+  q = guard(q, "cid_source", op.existing.source);
+  const { data, error } = await q.select("id");
+  if (error && error.code !== UNIQUE_VIOLATION) throw error;
+  // Unique violation (someone holds the CID) or a missed guard (the person
+  // changed since the plan was made): rare, so a holder lookup is fine here.
+  if (error || !data || data.length === 0) {
+    return { otherPersonId: await findHolder(scoped, op.personId, op.cid) };
+  }
+  return null;
+}
+
+/**
+ * Bulk variant of applyCidEvidence for decisions already made in memory with
+ * `decideCidEvidence` (lib/csv-import/importer.ts). Never aborts on a CID
+ * clash:
+ *  - set/overwrite/confirm-raise writes are guarded on `existing` and applied
+ *    vacate-before-claim (orderVacatesFirst); a unique violation or a missed
+ *    guard downgrades that one op to an open `flagged` conflict;
+ *  - conflict rows follow recordConflict's semantics (overwritten resolved,
+ *    flagged open, ignored resolved; flagged and ignored deduped per
+ *    (person, incoming_cid, incoming_source); a flag promotes an earlier
+ *    ignored row; an existing flag in any status is left alone), written as
+ *    chunked bulk inserts after dropping keys already in the table or
+ *    repeated within the batch.
+ */
+export async function applyCidEvidenceBatch(scoped: ScopedClient, ops: CidEvidenceOp[]): Promise<void> {
+  const conflicts: ConflictRow[] = [];
+  const base = (op: CidEvidenceOp) => ({
+    personId: op.personId,
+    existingCid: op.existing.cid,
+    existingSource: op.existing.source,
+    incomingCid: op.cid,
+    incomingSource: op.source,
+  });
+
+  for (const wave of orderVacatesFirst(ops.filter(isWrite))) {
+    for (const group of chunk(wave, WRITE_CONCURRENCY)) {
+      const results = await Promise.all(group.map((op) => writeOp(scoped, op)));
+      group.forEach((op, i) => {
+        const failed = results[i];
+        if (failed) {
+          // A missed source raise changes no CID: nothing to flag.
+          if (isClaim(op)) conflicts.push({ ...base(op), otherPersonId: failed.otherPersonId, outcome: "flagged" });
+        } else if (op.decision.kind === "overwrite") {
+          conflicts.push({ ...base(op), outcome: "overwritten" });
+        }
+      });
+    }
+  }
+
+  for (const op of ops) {
+    if (op.decision.kind === "flag") {
+      conflicts.push({ ...base(op), otherPersonId: op.decision.otherPersonId ?? null, outcome: "flagged" });
+    } else if (op.decision.kind === "ignore") {
+      conflicts.push({ ...base(op), outcome: "ignored" });
+    }
+  }
+
+  await insertConflicts(scoped, conflicts);
+}
+
+async function insertConflicts(scoped: ScopedClient, rows: ConflictRow[]): Promise<void> {
+  if (rows.length === 0) return;
+
+  // In-batch dedup of flagged/ignored: first row per key wins, except a flag
+  // supersedes an ignore (an ignore must not hide a real conflict).
+  const toInsert: ConflictRow[] = rows.filter((r) => r.outcome === "overwritten");
+  const deduped = new Map<string, ConflictRow>();
+  for (const r of rows) {
+    if (r.outcome === "overwritten") continue;
+    const k = conflictDedupKey(r);
+    const prev = deduped.get(k);
+    if (!prev || (prev.outcome === "ignored" && r.outcome === "flagged")) deduped.set(k, r);
+  }
+
+  const existing = new Map<string, IdentityOutcome>();
+  const personIds = [...new Set([...deduped.values()].map((r) => r.personId))];
+  for (const ids of chunk(personIds, IN_LIST_CHUNK)) {
+    const { data, error } = await scoped
+      .from("person_identity_conflict")
+      .select("person_id, incoming_cid, incoming_source, outcome")
+      .in("person_id", ids)
+      .in("outcome", ["flagged", "ignored"]);
+    if (error) throw error;
+    for (const e of (data ?? []) as unknown as Array<{
+      person_id: string;
+      incoming_cid: string;
+      incoming_source: string;
+      outcome: IdentityOutcome;
+    }>) {
+      existing.set(
+        conflictDedupKey({ personId: e.person_id, incomingCid: e.incoming_cid, incomingSource: e.incoming_source }),
+        e.outcome,
+      );
+    }
+  }
+
+  const promotions: ConflictRow[] = [];
+  for (const [k, r] of deduped) {
+    const prior = existing.get(k);
+    if (!prior) toInsert.push(r);
+    else if (prior === "ignored" && r.outcome === "flagged") promotions.push(r);
+  }
+
+  for (const group of chunk(toInsert, CONFLICT_INSERT_CHUNK)) {
+    const { error } = await scoped.from("person_identity_conflict").insert(group.map(toConflictInsert));
+    if (!error) continue;
+    if (error.code !== UNIQUE_VIOLATION) throw error;
+    // A key was written since we read (or the read was truncated): fall back
+    // to the per-row path, which resolves each collision the same way.
+    for (const r of group) await recordConflict(scoped, r);
+  }
+
+  // Rare: recordConflict's insert-then-promote path performs the promotion.
+  for (const r of promotions) await recordConflict(scoped, r);
 }
 
 /** Test-only seam: runs applyCidEvidence with a hook just before each guarded write. */

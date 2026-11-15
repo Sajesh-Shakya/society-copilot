@@ -18,6 +18,25 @@ export interface ConflictRow {
 /** Postgres unique_violation. */
 export const UNIQUE_VIOLATION = "23505";
 
+/** The person_identity_conflict insert payload for a conflict (club_id is stamped by the scoped client). */
+export function toConflictInsert(row: ConflictRow): Record<string, unknown> {
+  return {
+    person_id: row.personId,
+    existing_cid: row.existingCid,
+    existing_source: row.existingSource,
+    incoming_cid: row.incomingCid,
+    incoming_source: row.incomingSource,
+    other_person_id: row.otherPersonId ?? null,
+    outcome: row.outcome,
+    status: row.outcome === "flagged" ? "open" : "resolved",
+  };
+}
+
+/** Key of the flagged/ignored dedup index (club is implied by the scoped client). */
+export function conflictDedupKey(row: { personId: string; incomingCid: string; incomingSource: string }): string {
+  return `${row.personId}\u0000${row.incomingCid}\u0000${row.incomingSource}`;
+}
+
 /**
  * Logs one CID conflict. Flagged rows open for admin review; overwritten and
  * ignored rows are informational. Flagged and ignored share a dedup key
@@ -29,16 +48,7 @@ export const UNIQUE_VIOLATION = "23505";
  *    flag untouched in any status (a dismissed flag stays dismissed).
  */
 export async function recordConflict(scoped: ScopedClient, row: ConflictRow): Promise<void> {
-  const { error } = await scoped.from("person_identity_conflict").insert({
-    person_id: row.personId,
-    existing_cid: row.existingCid,
-    existing_source: row.existingSource,
-    incoming_cid: row.incomingCid,
-    incoming_source: row.incomingSource,
-    other_person_id: row.otherPersonId ?? null,
-    outcome: row.outcome,
-    status: row.outcome === "flagged" ? "open" : "resolved",
-  });
+  const { error } = await scoped.from("person_identity_conflict").insert(toConflictInsert(row));
   if (!error) return;
   if (error.code !== UNIQUE_VIOLATION || row.outcome === "overwritten") throw error;
   if (row.outcome === "ignored") return;

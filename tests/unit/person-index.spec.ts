@@ -109,6 +109,22 @@ test.describe("duplicates mirror old maybeSingle() error path", () => {
   });
 });
 
+test.describe("cidSourceById", () => {
+  test("records each person's cid_source, null when absent", () => {
+    const index = buildPersonIndex([
+      { id: "s1", cid: "03079021", cid_source: "walk_in", email: "a@x.com", full_name: "A" },
+      { id: "s2", cid: "06113211", cid_source: "sso", email: "b@x.com", full_name: "B" },
+      { id: "s3", cid: null, cid_source: null, email: "c@x.com", full_name: "C" },
+      { id: "s4", cid: "01234567", email: "d@x.com", full_name: "D" },
+    ]);
+    expect(index.cidSourceById.get("s1")).toBe("walk_in");
+    expect(index.cidSourceById.get("s2")).toBe("sso");
+    expect(index.cidSourceById.get("s3")).toBeNull();
+    expect(index.cidSourceById.get("s4")).toBeNull();
+    expect(index.cidSourceById.size).toBe(4);
+  });
+});
+
 test.describe("fetchAllPages", () => {
   test("pages until a short page", async () => {
     const all = Array.from({ length: 2500 }, (_, i) => i);
