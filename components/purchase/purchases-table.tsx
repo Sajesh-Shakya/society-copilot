@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { Fragment, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { rematchUnmatchedPurchases } from "@/lib/purchase/actions";
+import { MatchPanel } from "@/components/identity/match-panel";
 
 export interface PurchaseRow {
   id: string;
@@ -40,6 +41,7 @@ export function PurchasesTable({ clubSlug, purchases }: { clubSlug: string; purc
   const [showEmails, setShowEmails] = useState(false);
   const [showOnlyUnmatched, setShowOnlyUnmatched] = useState(false);
   const [isRematching, startRematch] = useTransition();
+  const [matchingId, setMatchingId] = useState<string | null>(null);
 
   const unmatchedCount = purchases.filter((p) => p.matchStatus === "unmatched").length;
   const visiblePurchases = showOnlyUnmatched
@@ -92,30 +94,55 @@ export function PurchasesTable({ clubSlug, purchases }: { clubSlug: string; purc
               <th className="whitespace-nowrap px-3 py-2 text-left">Status</th>
               <th className="whitespace-nowrap px-3 py-2 text-left">Source</th>
               <th className="whitespace-nowrap px-3 py-2 text-left">Purchased</th>
+              <th className="px-3 py-2" aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
             {visiblePurchases.map((p) => (
-              <tr key={p.id} className="border-b-2 border-border">
-                <td className="whitespace-nowrap px-3 py-2">
-                  {p.rawPersonName}
-                  {p.matchStatus !== "unmatched" && p.matchedPersonName && p.matchedPersonName !== p.rawPersonName && (
-                    <span className="ml-1 text-xs text-muted-foreground">(matched: {p.matchedPersonName})</span>
+              <Fragment key={p.id}>
+                <tr className="border-b-2 border-border">
+                  <td className="whitespace-nowrap px-3 py-2">
+                    {p.rawPersonName}
+                    {p.matchStatus !== "unmatched" && p.matchedPersonName && p.matchedPersonName !== p.rawPersonName && (
+                      <span className="ml-1 text-xs text-muted-foreground">(matched: {p.matchedPersonName})</span>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{p.rawCid ?? "—"}</td>
+                  {showEmails && (
+                    <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{p.rawEmail ?? "—"}</td>
                   )}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{p.rawCid ?? "—"}</td>
-                {showEmails && (
-                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{p.rawEmail ?? "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2">{p.productName ?? "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2">
+                    <Badge variant={MATCH_STATUS_VARIANT[p.matchStatus] ?? "secondary"}>{p.matchStatus}</Badge>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{p.source}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+                    {new Date(p.purchasedAt).toLocaleDateString()}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right">
+                    {p.matchStatus === "unmatched" && matchingId !== p.id && (
+                      <Button variant="outline" size="sm" onClick={() => setMatchingId(p.id)}>
+                        Match…
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+                {matchingId === p.id && (
+                  <tr className="border-b-2 border-border bg-muted/30">
+                    <td colSpan={showEmails ? 8 : 7}>
+                      <MatchPanel
+                        clubSlug={clubSlug}
+                        purchase={p}
+                        onMatched={() => {
+                          setMatchingId(null);
+                          router.refresh();
+                        }}
+                        onCancel={() => setMatchingId(null)}
+                      />
+                    </td>
+                  </tr>
                 )}
-                <td className="whitespace-nowrap px-3 py-2">{p.productName ?? "—"}</td>
-                <td className="whitespace-nowrap px-3 py-2">
-                  <Badge variant={MATCH_STATUS_VARIANT[p.matchStatus] ?? "secondary"}>{p.matchStatus}</Badge>
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{p.source}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-                  {new Date(p.purchasedAt).toLocaleDateString()}
-                </td>
-              </tr>
+              </Fragment>
             ))}
           </tbody>
         </table>

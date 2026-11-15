@@ -32,19 +32,30 @@ export default async function AdminPurchasesPage({
   }
 
   const scoped = createClubScopedClient(clubId);
-  const [{ data: rawPurchases }, products, recentUploads] = await Promise.all([
+  const purchaseColumns =
+    'id, raw_person_name, raw_cid, raw_email, source, purchased_at, match_status, product:product_id(name), person:person_id(full_name)';
+  // The latest 20 purchases, plus every unmatched one (capped) so older
+  // unmatched rows can still be matched by hand from this table.
+  const [{ data: rawRecent }, { data: rawUnmatched }, products, recentUploads] = await Promise.all([
+    scoped.from('purchase').select(purchaseColumns).order('purchased_at', { ascending: false }).limit(20),
     scoped
       .from('purchase')
-      .select(
-        'id, raw_person_name, raw_cid, raw_email, source, purchased_at, match_status, product:product_id(name), person:person_id(full_name)'
-      )
+      .select(purchaseColumns)
+      .eq('match_status', 'unmatched')
       .order('purchased_at', { ascending: false })
-      .limit(20),
+      .limit(200),
     listProducts(clubId),
     listRecentUploads(clubId, 5),
   ]);
 
-  const purchaseRows = (rawPurchases ?? []) as unknown as {
+  type RawPurchase = { id: string; purchased_at: string };
+  const byId = new Map<string, RawPurchase>();
+  for (const rows of [rawRecent, rawUnmatched]) {
+    for (const row of (rows ?? []) as unknown as RawPurchase[]) byId.set(row.id, row);
+  }
+  const rawPurchases = [...byId.values()].sort((a, b) => b.purchased_at.localeCompare(a.purchased_at));
+
+  const purchaseRows = rawPurchases as unknown as {
     id: string;
     raw_person_name: string;
     raw_cid: string | null;
