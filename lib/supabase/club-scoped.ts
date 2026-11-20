@@ -28,6 +28,9 @@ type ClubScopedTable = (typeof CLUB_SCOPED_TABLES)[number];
 const CLUB_AWARE_RPC_PARAM: Record<string, string> = {
   search_person_by_name: "target_club_id",
   reapply_waivers_for_everyone_with_debt: "target_club_id",
+  dashboard_signups: "target_club_id",
+  dashboard_revenue: "target_club_id",
+  dashboard_money_owed: "target_club_id",
 };
 
 type Row = Record<string, unknown>;
