@@ -5,16 +5,18 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { approveChase, sendChase, rejectChase } from "@/lib/chase/actions";
+import { approveChase, approveChaseAndRemember, sendChase, rejectChase } from "@/lib/chase/actions";
 
 export function ApprovalActions({
   clubSlug,
   chaseEmailId,
   status,
+  personHasStandingApproval = false,
 }: {
   clubSlug: string;
   chaseEmailId: string;
   status: string;
+  personHasStandingApproval?: boolean;
 }) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
@@ -27,6 +29,24 @@ export function ApprovalActions({
       const result = await approveChase(clubSlug, chaseEmailId);
       if (result.approved) {
         toast.success("Approved.");
+        router.refresh();
+      } else {
+        toast.error("Could not approve -- this draft may have already been actioned.");
+      }
+    } catch {
+      toast.error("Approve failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleApproveAndRemember() {
+    if (!window.confirm("Future reminders to this person will send automatically. You can revoke this.")) return;
+    setIsLoading(true);
+    try {
+      const result = await approveChaseAndRemember(clubSlug, chaseEmailId);
+      if (result.approved) {
+        toast.success("Approved. Future reminders to this person will send automatically.");
         router.refresh();
       } else {
         toast.error("Could not approve -- this draft may have already been actioned.");
@@ -113,6 +133,11 @@ export function ApprovalActions({
       {(status === "pending_approval" || status === "failed") && (
         <Button type="button" size="sm" disabled={isLoading} onClick={handleApprove}>
           {status === "failed" ? "Retry" : "Approve"}
+        </Button>
+      )}
+      {(status === "pending_approval" || status === "failed") && !personHasStandingApproval && (
+        <Button type="button" variant="outline" size="sm" disabled={isLoading} onClick={handleApproveAndRemember}>
+          Approve and don&apos;t ask again for this person
         </Button>
       )}
       {status === "approved" && (

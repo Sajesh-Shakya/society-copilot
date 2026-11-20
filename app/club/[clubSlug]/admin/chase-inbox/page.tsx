@@ -2,7 +2,9 @@ import Link from "next/link";
 import { requireAdmin, UnauthorizedError } from "@/lib/auth/require-admin";
 import { redirect } from "next/navigation";
 import { createClubScopedClient } from "@/lib/supabase/club-scoped";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { ApprovalActions } from "@/components/chase/approval-actions";
+import { AutoSendControls, type StandingPerson } from "@/components/chase/auto-send-controls";
 import { clubPath } from "@/lib/club-path";
 
 export const dynamic = "force-dynamic";
@@ -42,14 +44,27 @@ export default async function ChaseInboxPage({
   const personIds = [...new Set(chaseEmailRows.map((c) => c.person_id))];
   const { data: people } =
     personIds.length > 0
-      ? await scoped.from("person").select("id, full_name, email").in("id", personIds)
+      ? await scoped.from("person").select("id, full_name, email, chase_auto_approved_at").in("id", personIds)
       : { data: [] };
   const personRows = (people ?? []) as unknown as {
     id: string;
     full_name: string;
     email: string;
+    chase_auto_approved_at: string | null;
   }[];
   const peopleById = new Map(personRows.map((p) => [p.id, p]));
+
+  const [{ data: clubRow }, { data: standing }] = await Promise.all([
+    createAdminClient().from("club").select("chase_auto_send_paused").eq("id", clubId).single(),
+    scoped
+      .from("person")
+      .select("id, full_name, email, chase_auto_approved_at")
+      .not("chase_auto_approved_at", "is", null)
+      .order("full_name"),
+  ]);
+  const standingPeople: StandingPerson[] = (
+    (standing ?? []) as unknown as { id: string; full_name: string; email: string; chase_auto_approved_at: string }[]
+  ).map((p) => ({ id: p.id, fullName: p.full_name, email: p.email, since: p.chase_auto_approved_at }));
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:py-10">
@@ -60,6 +75,13 @@ export default async function ChaseInboxPage({
       <p className="mt-1 text-sm text-muted-foreground">
         Drafts awaiting approval, and approved drafts awaiting send.
       </p>
+
+      <AutoSendControls
+        clubSlug={clubSlug}
+        paused={clubRow?.chase_auto_send_paused ?? false}
+        globalEnabled={process.env.CHASE_AUTO_SEND_REPEATS === "true"}
+        people={standingPeople}
+      />
 
       <div className="mt-8 space-y-4">
         {chaseEmailRows.length > 0 ? (
@@ -76,7 +98,12 @@ export default async function ChaseInboxPage({
                       Reminder #{c.sequence_number} -- {c.status}
                     </p>
                   </div>
-                  <ApprovalActions clubSlug={clubSlug} chaseEmailId={c.id} status={c.status} />
+                  <ApprovalActions
+                    clubSlug={clubSlug}
+                    chaseEmailId={c.id}
+                    status={c.status}
+                    personHasStandingApproval={Boolean(person?.chase_auto_approved_at)}
+                  />
                 </div>
                 <div className="mt-3 text-sm">
                   <p className="font-medium">{c.subject}</p>
