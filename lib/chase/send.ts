@@ -1,5 +1,6 @@
 import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { STANDING_CANCEL_NOTE } from "@/lib/chase/standing";
 import { getOutstandingDebt } from "@/lib/debt/calculator";
 import type { EmailChannelAdapter } from "@/lib/email/types";
 import { resendEmailAdapter } from "@/lib/email/resend-adapter";
@@ -230,7 +231,7 @@ export async function processAutoSends(
           .from("chase_email")
           .update({
             status: "cancelled",
-            note: "Auto-cancelled: standing approval no longer valid before send.",
+            note: STANDING_CANCEL_NOTE,
           })
           .eq("id", row.id)
           .eq("status", "approved");

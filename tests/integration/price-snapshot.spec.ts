@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { randomUUID } from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { ingestPurchases } from "@/lib/purchase/interface";
+import { ingestPurchases, changeUploadProduct } from "@/lib/purchase/interface";
 import type { RawPurchaseRow } from "@/lib/purchase/types";
 
 const admin = createAdminClient();
@@ -84,4 +84,28 @@ test("unpriced product gives null purchase price", async () => {
   const r1 = row({ productId: a.id });
   await ingestPurchases([r1], judoClubId);
   expect(await priceOf(r1.externalId)).toBeNull();
+});
+
+test("moving an upload to another product re-copies that product's price (or null)", async () => {
+  const a = await makeProduct(500);
+  const b = await makeProduct(800);
+  const c = await makeProduct(null);
+  const { data: upload, error } = await admin
+    .from("purchase_upload")
+    .insert({ club_id: judoClubId, product_id: a.id, filename: "price-move-test.xlsx", row_count: 1 })
+    .select("id")
+    .single();
+  if (error) throw error;
+  try {
+    const r1 = row({ productId: a.id, uploadId: upload.id });
+    await ingestPurchases([r1], judoClubId);
+    expect(await priceOf(r1.externalId)).toBe(500);
+    await changeUploadProduct(judoClubId, upload.id, b.id);
+    expect(await priceOf(r1.externalId)).toBe(800);
+    await changeUploadProduct(judoClubId, upload.id, c.id);
+    expect(await priceOf(r1.externalId)).toBeNull();
+  } finally {
+    await admin.from("purchase").delete().eq("upload_id", upload.id);
+    await admin.from("purchase_upload").delete().eq("id", upload.id);
+  }
 });

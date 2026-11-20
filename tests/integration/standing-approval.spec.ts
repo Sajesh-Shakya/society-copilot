@@ -195,3 +195,18 @@ test("approveChaseEmailAndRemember approves the email and records standing appro
   expect(person!.chase_auto_approved_by).toBe("admin@example.test");
   expect(person!.chase_auto_approved_at).not.toBeNull();
 });
+
+test("after a revoke cancels the pending row, the generator drafts a fresh pending_approval reminder", async () => {
+  const a = await debtor();
+  await grantStandingApproval(a, clubId, "admin@example.test");
+  await generateChaseEmails(clubId);
+  await revokeStandingApproval(a, clubId);
+  const { adapter, sent } = fakeAdapter();
+  await processAutoSends(clubId, adapter);
+  expect((await chaseRow(a))[0].status).toBe("cancelled");
+  await generateChaseEmails(clubId);
+  const rows = await chaseRow(a);
+  expect(rows).toHaveLength(2);
+  expect(rows[1]).toMatchObject({ sequence_number: 2, status: "pending_approval", auto_approved: false });
+  expect(sent).toHaveLength(0);
+});

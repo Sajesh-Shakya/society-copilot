@@ -675,11 +675,15 @@ export async function changeUploadProduct(
   // sweep.
   const { data: product, error: productError } = await scoped
     .from('product')
-    .select('id')
+    .select('id, price_pence')
     .eq('id', newProductId)
     .maybeSingle();
   if (productError) throw productError;
   if (!product) throw new Error(`Product ${newProductId} does not belong to this club.`);
+  // A purchase's price follows the product it is recorded against: moving an
+  // upload re-copies the new product's current price (null if unpriced)
+  // rather than leaving the old product's price behind.
+  const newPricePence = (product as unknown as { price_pence: number | null }).price_pence ?? null;
 
   const { data: rawPurchases, error } = await scoped
     .from('purchase')
@@ -704,7 +708,7 @@ export async function changeUploadProduct(
 
   const { error: updatePurchasesError } = await scoped
     .from('purchase')
-    .update({ product_id: newProductId })
+    .update({ product_id: newProductId, price_pence: newPricePence })
     .eq('upload_id', uploadId);
   if (updatePurchasesError) throw updatePurchasesError;
 
