@@ -178,6 +178,30 @@ export async function ingestPurchases(
     }
   }
 
+  // Snapshot each product's current price onto the purchases created now, so
+  // a later price edit never changes past revenue.
+  const priceByProductId = new Map<string, number | null>();
+  const resolvedProductIds = [
+    ...new Set(
+      newRows
+        .map((row) => row.productId ?? (row.productName ? productMap.get(row.productName) : undefined))
+        .filter((id): id is string => Boolean(id))
+    ),
+  ];
+  if (resolvedProductIds.length > 0) {
+    const { data: priced, error: priceError } = await scoped
+      .from('product')
+      .select('id, price_pence')
+      .in('id', resolvedProductIds);
+    if (priceError) {
+      console.warn('Product price lookup failed; purchases will be unpriced:', priceError.message);
+    } else {
+      for (const p of (priced ?? []) as unknown as { id: string; price_pence: number | null }[]) {
+        priceByProductId.set(p.id, p.price_pence ?? null);
+      }
+    }
+  }
+
   // Step 4: Build purchase records, deriving is_student and match status.
   const purchases: (PurchaseRecord & { sourceRowId: string })[] = [];
 
@@ -211,6 +235,7 @@ export async function ingestPurchases(
       isStudent,
       matchStatus: matchResult?.matchStatus ?? 'unmatched',
       purchasedAt: row.purchasedAt,
+      pricePence: priceByProductId.get(productId) ?? null,
     });
   }
 
@@ -262,6 +287,7 @@ export async function ingestPurchases(
     raw_cid: purchase.rawCid,
     match_status: purchase.matchStatus,
     purchased_at: purchase.purchasedAt.toISOString(),
+    price_pence: purchase.pricePence,
   });
 
   // Fallback when a whole chunk errors: one row at a time, so only the
