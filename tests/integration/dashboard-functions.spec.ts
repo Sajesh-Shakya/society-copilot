@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { randomUUID } from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClubScopedClient } from "@/lib/supabase/club-scoped";
+import { getDashboard } from "@/lib/dashboard/queries";
 
 const admin = createAdminClient();
 let judoClubId: string;
@@ -23,12 +24,13 @@ let clubIds: string[] = [];
 
 test.afterEach(async () => {
   const steps: [string, () => PromiseLike<{ error: { message: string } | null }>][] = [];
-  if (sessionIds.length) steps.push(["attendance", () => admin.from("attendance_record").delete().in("session_id", sessionIds)]);
-  if (productIds.length) steps.push(["purchase", () => admin.from("purchase").delete().in("product_id", productIds)]);
-  if (sessionIds.length) steps.push(["session", () => admin.from("session").delete().in("id", sessionIds)]);
-  if (personIds.length) steps.push(["person", () => admin.from("person").delete().in("id", personIds)]);
-  if (productIds.length) steps.push(["product", () => admin.from("product").delete().in("id", productIds)]);
-  if (clubIds.length) steps.push(["club", () => admin.from("club").delete().in("id", clubIds)]);
+  const [sessions, people, products, clubs] = [sessionIds, personIds, productIds, clubIds];
+  if (sessionIds.length) steps.push(["attendance", () => admin.from("attendance_record").delete().in("session_id", sessions)]);
+  if (productIds.length) steps.push(["purchase", () => admin.from("purchase").delete().in("product_id", products)]);
+  if (sessionIds.length) steps.push(["session", () => admin.from("session").delete().in("id", sessions)]);
+  if (personIds.length) steps.push(["person", () => admin.from("person").delete().in("id", people)]);
+  if (productIds.length) steps.push(["product", () => admin.from("product").delete().in("id", products)]);
+  if (clubIds.length) steps.push(["club", () => admin.from("club").delete().in("id", clubs)]);
   sessionIds = []; personIds = []; productIds = []; clubIds = [];
   for (const [name, fn] of steps) {
     const { error } = await fn();
@@ -203,4 +205,41 @@ test("dashboard_money_owed returns a zero row for a club with no debt", async ()
   if (error) throw error;
   clubIds.push(other.id);
   expect(await owed(other.id)).toEqual({ sessions: 0, people: 0, bucket_0_14: 0, bucket_15_30: 0, bucket_31_plus: 0 });
+});
+
+test("getDashboard aggregates averages, revenue and owed from the SQL functions", async () => {
+  const before = await owed(judoClubId);
+  const s1 = await makeSession(judoClubId, "2099-05-01T18:00:00Z");
+  const s2 = await makeSession(judoClubId, "2099-05-08T18:00:00Z");
+  const p1 = await makePerson(judoClubId);
+  const p2 = await makePerson(judoClubId);
+  const p3 = await makePerson(judoClubId);
+  await attend(judoClubId, p1, s1, true);
+  await attend(judoClubId, p2, s1, true);
+  await attend(judoClubId, p3, s1, false);
+  await attend(judoClubId, p1, s2, true);
+  const product = await makeProduct(judoClubId);
+  await addPurchase(judoClubId, product, 500, "2099-05-02T00:00:00Z");
+  await addPurchase(judoClubId, product, null, "2099-05-03T00:00:00Z");
+
+  const d = await getDashboard(judoClubId, { start: new Date(RANGE_START), end: new Date("2099-06-01T00:00:00Z") });
+  expect(d.signups.map((s) => s.signups).sort()).toEqual([1, 3]);
+  expect(d.averageSignups).toBe(2);
+  expect(d.averageAttended).toBe(1.5);
+  expect(d.totalRevenuePence).toBe(500);
+  expect(d.unpricedPurchases).toBe(1);
+  const afterOwed = await owed(judoClubId);
+  expect(before.sessions).toBeLessThanOrEqual(afterOwed.sessions);
+  expect(d.owed.sessions).toBe(afterOwed.sessions);
+  expect(d.owed.people).toBe(afterOwed.people);
+  expect(d.targets).toEqual({ signupTarget: 20, signupMin: 15 });
+  expect(Array.isArray(d.singleSessionPrices)).toBe(true);
+});
+
+test("getDashboard on an empty range has null averages and no NaN", async () => {
+  const d = await getDashboard(judoClubId, { start: new Date("2098-01-01T00:00:00Z"), end: new Date("2098-02-01T00:00:00Z") });
+  expect(d.signups).toEqual([]);
+  expect(d.averageSignups).toBeNull();
+  expect(d.averageAttended).toBeNull();
+  expect(d.totalRevenuePence).toBe(0);
 });
