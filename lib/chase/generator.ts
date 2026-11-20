@@ -67,8 +67,18 @@ export async function generateChaseEmails(clubId: string): Promise<{ created: nu
       fullName: cycle.fullName,
       debtCount: cycle.debtCount,
     });
-    const autoApproved = nextSequence > 1 && process.env.CHASE_AUTO_SEND_REPEATS === "true";
-    const status = nextSequence === 1 ? "pending_approval" : autoApproved ? "approved" : "pending_approval";
+    const globalAutoSend = process.env.CHASE_AUTO_SEND_REPEATS === "true";
+    // Per-person standing approval (any sequence number, incl. the first).
+    // Exempt people never reach here: active_debt_cycle excludes them.
+    const standing = globalAutoSend && cycle.chaseAutoApprovedAt !== null;
+    const autoApproved = standing || (nextSequence > 1 && globalAutoSend);
+    const status = standing ? "approved" : nextSequence === 1 ? "pending_approval" : autoApproved ? "approved" : "pending_approval";
+    const approvedBy = standing
+      ? `standing:${cycle.chaseAutoApprovedBy ?? "unknown"}`
+      : autoApproved
+        ? "system:CHASE_AUTO_SEND_REPEATS"
+        : null;
+    const approvedAt = standing ? cycle.chaseAutoApprovedAt : autoApproved ? new Date().toISOString() : null;
 
     const { error: insertError } = await scoped.from("chase_email").insert({
       person_id: cycle.personId,
@@ -77,8 +87,9 @@ export async function generateChaseEmails(clubId: string): Promise<{ created: nu
       status,
       subject,
       body,
-      approved_by: autoApproved ? "system:CHASE_AUTO_SEND_REPEATS" : null,
-      approved_at: autoApproved ? new Date().toISOString() : null,
+      approved_by: approvedBy,
+      approved_at: approvedAt,
+      auto_approved: standing,
     });
 
     if (insertError) {

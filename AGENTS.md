@@ -77,3 +77,11 @@ Everything else still applies to this feature unless a future amendment states
 otherwise: human approval before any send, Zod validation of LLM outputs, no real
 message sending unless explicitly built and approved, no production auth unless
 explicitly requested, and full audit logging.
+
+A per-person standing approval (granted by an admin in the chase inbox via
+"Approve and don't ask again", revocable, ignored for exempt people, pausable
+per club, capped per run by `CHASE_AUTO_SEND_MAX_PER_RUN`, and effective only
+while `CHASE_AUTO_SEND_REPEATS=true`) satisfies the "human approval before any
+send" rule for that person's later reminders. Each auto-sent email records
+`auto_approved = true` plus the approving admin in `approved_by`
+(`standing:<admin email>`), and every gate is re-checked at send time.

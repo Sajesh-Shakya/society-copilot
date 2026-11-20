@@ -270,7 +270,7 @@ test.describe("sendChaseEmail", () => {
       const repeatId = await createApprovedChaseEmail(personId, 2);
 
       const result = await processAutoSends(judoClubId);
-      expect(result).toEqual({ sent: 0, cancelled: 0, failed: 0 });
+      expect(result).toEqual({ sent: 0, cancelled: 0, failed: 0, skipped: 0 });
 
       const { data: repeat, error } = await admin
         .from("chase_email")
