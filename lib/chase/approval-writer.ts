@@ -71,3 +71,50 @@ export async function rejectChaseEmail(
   }
   return { rejected: (data?.length ?? 0) > 0 };
 }
+
+// Standing approval: an admin's per-person "don't ask again". Exempt people
+// are refused. Only has effect while CHASE_AUTO_SEND_REPEATS === "true".
+export async function grantStandingApproval(
+  personId: string,
+  clubId: string,
+  actorEmail: string
+): Promise<{ granted: boolean }> {
+  const scoped = createClubScopedClient(clubId);
+  const { data, error } = await scoped
+    .from("person")
+    .update({ chase_auto_approved_at: new Date().toISOString(), chase_auto_approved_by: actorEmail })
+    .eq("id", personId)
+    .eq("is_exempt", false)
+    .select("id");
+  if (error) throw new Error(`Failed to grant standing approval for person ${personId}: ${error.message}`);
+  return { granted: (data?.length ?? 0) > 0 };
+}
+
+export async function revokeStandingApproval(personId: string, clubId: string): Promise<{ revoked: boolean }> {
+  const scoped = createClubScopedClient(clubId);
+  const { data, error } = await scoped
+    .from("person")
+    .update({ chase_auto_approved_at: null, chase_auto_approved_by: null })
+    .eq("id", personId)
+    .select("id");
+  if (error) throw new Error(`Failed to revoke standing approval for person ${personId}: ${error.message}`);
+  return { revoked: (data?.length ?? 0) > 0 };
+}
+
+export async function approveChaseEmailAndRemember(
+  chaseEmailId: string,
+  clubId: string,
+  actorEmail: string
+): Promise<{ approved: boolean }> {
+  const result = await approveChaseEmail(chaseEmailId, clubId, actorEmail);
+  if (!result.approved) return result;
+  const scoped = createClubScopedClient(clubId);
+  const { data, error } = (await scoped
+    .from("chase_email")
+    .select("person_id")
+    .eq("id", chaseEmailId)
+    .maybeSingle()) as unknown as { data: { person_id: string } | null; error: { message: string } | null };
+  if (error) throw new Error(`Failed to look up chase_email ${chaseEmailId}: ${error.message}`);
+  if (data) await grantStandingApproval(data.person_id, clubId, actorEmail);
+  return result;
+}

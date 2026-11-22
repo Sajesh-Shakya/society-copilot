@@ -517,6 +517,15 @@ Design: `docs/superpowers/specs/2026-11-14-identity-trust-and-duplicates-design.
   unit 158 passed, integration 257 passed, e2e 17 passed, acceptance 22
   passed, `tsc --noEmit` clean.
 
+## Dashboard, product prices, standing approval (2026-11-19)
+
+- **Dashboard** (`/club/<slug>/admin/dashboard`): signups per session vs the club's target/minimum (`club.signup_target`, `club.signup_min`, editable on the page), revenue per product, and money owed with age buckets. Totals come from three SQL functions (`dashboard_signups`, `dashboard_revenue`, `dashboard_money_owed`), registered in `CLUB_AWARE_RPC_PARAM`, so the PostgREST 1000-row cap never truncates them. Range via `?weeks=4|8|12|26` (default 8).
+- **Products & prices** (`/club/<slug>/admin/products`): admins add, price and retire products. Each purchase snapshots the product's `price_pence` at ingest, so editing a price never changes past revenue. "Apply price to unpriced purchases" back-fills null rows only. The uploader preselects a product from a `Product_Sales_ID_<n>` filename when it matches a product's sales ID (the admin still confirms).
+- **Standing approval**: "Approve and don't ask again for this person" in the chase inbox sets `person.chase_auto_approved_at/by`. While `CHASE_AUTO_SEND_REPEATS=true` the generator creates that person's emails as `approved` with `auto_approved = true` and `approved_by = standing:<admin>`. `processAutoSends` re-checks exempt/revoked at send time, honours the per-club pause (`club.chase_auto_send_paused`; rows stay `approved`), and sends at most `CHASE_AUTO_SEND_MAX_PER_RUN` (default 50) per run. Manual Send is never blocked by pause or cap.
+- **Migrations to apply before deploy** (already applied to the dev project): `20261119090000_prices_targets_standing_approval.sql`, `20261119090100_dashboard_functions.sql`.
+- **Single-session product split (2880 non-member / 2922 member)**: script `scripts/split-single-session-product.ts` exists (dry-run by default). **Applied 2026-11-22** for judo: 32 purchases moved to "Single Session Pass (Member)" (£5, sales id 2922) and 6 to "(Non-member)" (£8, sales id 2880); 23 purchases stay on the old "Single Session Pass", which remains active.
+- **Not manually browser-checked**: the products, dashboard and chase-inbox UI changes were verified by tsc, eslint, `next build` and tests only.
+
 ## Acceptance tests
 
 Signed-in browser specs in `tests/acceptance/`, run against a real Supabase

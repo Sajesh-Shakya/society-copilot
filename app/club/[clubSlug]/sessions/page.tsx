@@ -65,6 +65,12 @@ export default async function SessionsIndexPage({
             <PendingLink href={clubPath(clubSlug, "/admin/purchases")}>Purchases</PendingLink>
           </Button>
           <Button asChild variant="ghost" size="sm">
+            <PendingLink href={clubPath(clubSlug, "/admin/products")}>Products</PendingLink>
+          </Button>
+          <Button asChild variant="ghost" size="sm">
+            <PendingLink href={clubPath(clubSlug, "/admin/dashboard")}>Dashboard</PendingLink>
+          </Button>
+          <Button asChild variant="ghost" size="sm">
             <PendingLink href={clubPath(clubSlug, "/admin/people-review")} className="flex items-center gap-2">
               People review
               {openConflictCount > 0 && <Badge variant="secondary">{openConflictCount} open</Badge>}

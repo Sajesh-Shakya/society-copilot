@@ -1,6 +1,7 @@
 import { createClubScopedClient } from "@/lib/supabase/club-scoped";
 import { listActiveDebtCycles } from "@/lib/chase/debt-cycles";
 import { buildChaseEmailContent } from "@/lib/chase/template";
+import { STANDING_CANCEL_NOTE } from "@/lib/chase/standing";
 
 const parsedThreshold = Number(process.env.CHASE_THRESHOLD_DAYS);
 const CHASE_THRESHOLD_DAYS = Number.isFinite(parsedThreshold) && parsedThreshold > 0
@@ -28,7 +29,7 @@ export async function generateChaseEmails(clubId: string): Promise<{ created: nu
   for (const cycle of cycles) {
     const { data: existing, error: existingError } = await scoped
       .from("chase_email")
-      .select("sequence_number, status, sent_at")
+      .select("sequence_number, status, sent_at, note")
       .eq("person_id", cycle.personId)
       .eq("debt_cycle_started_at", cycle.debtCycleStartedAt)
       .order("sequence_number", { ascending: false })
@@ -44,10 +45,15 @@ export async function generateChaseEmails(clubId: string): Promise<{ created: nu
       sequence_number: number;
       status: string;
       sent_at: string | null;
+      note: string | null;
     }[];
     const last = existingRows[0];
     let shouldGenerate = false;
     let nextSequence = 1;
+    // True when the previous row was cancelled by a revoked standing approval:
+    // no human ever approved a reminder for this person, so the redraft must
+    // wait for manual approval even under CHASE_AUTO_SEND_REPEATS.
+    let afterStandingCancel = false;
 
     if (!last) {
       shouldGenerate =
@@ -55,6 +61,12 @@ export async function generateChaseEmails(clubId: string): Promise<{ created: nu
     } else if (last.status === "sent" && last.sent_at) {
       nextSequence = last.sequence_number + 1;
       shouldGenerate = daysBetween(new Date(last.sent_at), now) > CHASE_THRESHOLD_DAYS;
+    } else if (last.status === "cancelled" && last.note === STANDING_CANCEL_NOTE) {
+      // The row was never sent: standing approval was revoked (or the person
+      // exempted) before send. Draft the next one for a normal manual decision.
+      nextSequence = last.sequence_number + 1;
+      shouldGenerate = true;
+      afterStandingCancel = true;
     }
     // else: a draft/pending_approval/approved row already exists for this
     // cycle and hasn't been sent yet -- don't pile up another one on top of
@@ -67,8 +79,18 @@ export async function generateChaseEmails(clubId: string): Promise<{ created: nu
       fullName: cycle.fullName,
       debtCount: cycle.debtCount,
     });
-    const autoApproved = nextSequence > 1 && process.env.CHASE_AUTO_SEND_REPEATS === "true";
-    const status = nextSequence === 1 ? "pending_approval" : autoApproved ? "approved" : "pending_approval";
+    const globalAutoSend = process.env.CHASE_AUTO_SEND_REPEATS === "true";
+    // Per-person standing approval (any sequence number, incl. the first).
+    // Exempt people never reach here: active_debt_cycle excludes them.
+    const standing = globalAutoSend && cycle.chaseAutoApprovedAt !== null;
+    const autoApproved = standing || (nextSequence > 1 && globalAutoSend && !afterStandingCancel);
+    const status = standing ? "approved" : nextSequence === 1 || afterStandingCancel ? "pending_approval" : autoApproved ? "approved" : "pending_approval";
+    const approvedBy = standing
+      ? `standing:${cycle.chaseAutoApprovedBy ?? "unknown"}`
+      : autoApproved
+        ? "system:CHASE_AUTO_SEND_REPEATS"
+        : null;
+    const approvedAt = standing ? cycle.chaseAutoApprovedAt : autoApproved ? new Date().toISOString() : null;
 
     const { error: insertError } = await scoped.from("chase_email").insert({
       person_id: cycle.personId,
@@ -77,8 +99,9 @@ export async function generateChaseEmails(clubId: string): Promise<{ created: nu
       status,
       subject,
       body,
-      approved_by: autoApproved ? "system:CHASE_AUTO_SEND_REPEATS" : null,
-      approved_at: autoApproved ? new Date().toISOString() : null,
+      approved_by: approvedBy,
+      approved_at: approvedAt,
+      auto_approved: standing,
     });
 
     if (insertError) {

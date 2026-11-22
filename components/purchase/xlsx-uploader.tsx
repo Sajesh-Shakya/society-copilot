@@ -12,18 +12,40 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { parseSalesId } from "@/lib/purchase/sales-id";
 import type { ProductListItem } from "@/lib/purchase/queries";
 
 export function XlsxUploader({ clubSlug, products }: { clubSlug: string; products: ProductListItem[] }) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [productId, setProductId] = useState<string>("");
+  // A file whose product was guessed from its filename waits here for the
+  // admin to confirm, instead of uploading straight away.
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const pickerRef = useRef<FilePickerButtonHandle>(null);
 
   function handleFileSelected(file: File) {
+    if (!productId) {
+      const salesId = parseSalesId(file.name);
+      const matches = salesId ? products.filter((p) => p.externalSalesId === salesId) : [];
+      if (matches.length === 1) {
+        setProductId(matches[0].id);
+        setPendingFile(file);
+      } else {
+        toast.error("Pick a pass type first");
+        pickerRef.current?.reset();
+      }
+      return;
+    }
+    setPendingFile(null);
+    upload(file, productId);
+  }
+
+  function upload(file: File, chosenProductId: string) {
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("productId", productId);
+    formData.append("productId", chosenProductId);
 
     setIsLoading(true);
     uploadXlsx(clubSlug, formData)
@@ -43,13 +65,21 @@ export function XlsxUploader({ clubSlug, products }: { clubSlug: string; product
       .catch(() => toast.error("Upload failed"))
       .finally(() => {
         setIsLoading(false);
+        setPendingFile(null);
         pickerRef.current?.reset();
       });
   }
 
   return (
     <div className="flex flex-col gap-3">
-      <Select value={productId} onValueChange={setProductId} disabled={isLoading}>
+      <Select
+        value={productId}
+        onValueChange={(value) => {
+          setProductId(value);
+          setPendingFile(null);
+        }}
+        disabled={isLoading}
+      >
         <SelectTrigger className="w-full sm:w-64">
           <SelectValue placeholder="Which pass is this file for?" />
         </SelectTrigger>
@@ -65,13 +95,20 @@ export function XlsxUploader({ clubSlug, products }: { clubSlug: string; product
       <FilePickerButton
         ref={pickerRef}
         accept=".xlsx"
-        disabled={!productId}
         isLoading={isLoading}
         loadingLabel="Uploading…"
         label="Upload XLSX"
-        noFileLabel={productId ? "No file chosen" : "Pick a pass type first"}
+        noFileLabel="No file chosen"
         onFileSelected={handleFileSelected}
       />
+      {pendingFile && (
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="text-muted-foreground">Picked from filename — check it&apos;s right.</span>
+          <Button size="sm" disabled={isLoading} onClick={() => upload(pendingFile, productId)}>
+            Upload as {products.find((p) => p.id === productId)?.name}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

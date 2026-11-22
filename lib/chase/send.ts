@@ -1,4 +1,6 @@
 import { createClubScopedClient } from "@/lib/supabase/club-scoped";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { STANDING_CANCEL_NOTE } from "@/lib/chase/standing";
 import { getOutstandingDebt } from "@/lib/debt/calculator";
 import type { EmailChannelAdapter } from "@/lib/email/types";
 import { resendEmailAdapter } from "@/lib/email/resend-adapter";
@@ -150,10 +152,17 @@ export async function sendChaseEmail(
   }
 }
 
-// DC-4's auto-send path: every repeat reminder (sequence_number > 1) that
-// generateChaseEmails() pre-approved under CHASE_AUTO_SEND_REPEATS. Never
-// touches sequence_number = 1 rows -- those always require manual approval
-// (DC-3) and reach `approved` only through a future Phase 7 admin action.
+// DC-4's auto-send path. Eligible: approved rows that are repeat reminders
+// (sequence_number > 1, pre-approved under CHASE_AUTO_SEND_REPEATS) or were
+// created under a person's standing approval (auto_approved = true).
+// Gates, in order: global flag; club pause (rows stay approved so
+// un-pausing resumes); per-run cap CHASE_AUTO_SEND_MAX_PER_RUN (default 50).
+// Standing-approval rows re-check the person at send time.
+function maxPerRun(): number {
+  const n = Number.parseInt(process.env.CHASE_AUTO_SEND_MAX_PER_RUN ?? "", 10);
+  return Number.isFinite(n) && n > 0 ? n : 50;
+}
+
 export async function processAutoSends(
   clubId: string,
   adapter: EmailChannelAdapter = resendEmailAdapter
@@ -161,47 +170,89 @@ export async function processAutoSends(
   sent: number;
   cancelled: number;
   failed: number;
+  skipped: number;
 }> {
-  if (process.env.CHASE_AUTO_SEND_REPEATS !== "true") {
-    return { sent: 0, cancelled: 0, failed: 0 };
-  }
+  const none = { sent: 0, cancelled: 0, failed: 0, skipped: 0 };
+  if (process.env.CHASE_AUTO_SEND_REPEATS !== "true") return none;
+
+  const { data: club, error: clubError } = await createAdminClient()
+    .from("club")
+    .select("chase_auto_send_paused")
+    .eq("id", clubId)
+    .single();
+  if (clubError) throw new Error(`Failed to read club pause state: ${clubError.message}`);
+  if (club.chase_auto_send_paused) return none;
 
   const scoped = createClubScopedClient(clubId);
+  const eligible = "sequence_number.gt.1,auto_approved.eq.true";
+  const cap = maxPerRun();
   const { data: rows, error } = (await scoped
     .from("chase_email")
-    .select("id")
+    .select("id, person_id, auto_approved")
     .eq("status", "approved")
-    .gt("sequence_number", 1)) as unknown as {
-    data: { id: string }[] | null;
+    .or(eligible)
+    .order("created_at", { ascending: true })
+    .limit(cap)) as unknown as {
+    data: { id: string; person_id: string; auto_approved: boolean }[] | null;
     error: { message: string } | null;
   };
-
   if (error) {
     throw new Error(`Failed to list auto-sendable chase emails: ${error.message}`);
   }
+
+  const { count: totalEligible, error: countError } = await scoped
+    .from("chase_email")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "approved")
+    .or(eligible);
+  if (countError) throw new Error(`Failed to count auto-sendable chase emails: ${countError.message}`);
 
   const rowsToSend = rows ?? [];
   let sent = 0;
   let cancelled = 0;
   let failed = 0;
+  const skipped = Math.max(0, (totalEligible ?? rowsToSend.length) - rowsToSend.length);
 
   for (let i = 0; i < rowsToSend.length; i++) {
-    const result = await sendChaseEmail(rowsToSend[i].id, clubId, adapter);
+    const row = rowsToSend[i];
+
+    if (row.auto_approved) {
+      const { data: person, error: personError } = (await scoped
+        .from("person")
+        .select("is_exempt, chase_auto_approved_at")
+        .eq("id", row.person_id)
+        .maybeSingle()) as unknown as {
+        data: { is_exempt: boolean; chase_auto_approved_at: string | null } | null;
+        error: { message: string } | null;
+      };
+      if (personError) throw new Error(`Failed to re-check person ${row.person_id}: ${personError.message}`);
+      if (!person || person.is_exempt || person.chase_auto_approved_at === null) {
+        const { error: cancelError } = await scoped
+          .from("chase_email")
+          .update({
+            status: "cancelled",
+            note: STANDING_CANCEL_NOTE,
+          })
+          .eq("id", row.id)
+          .eq("status", "approved");
+        if (cancelError) throw new Error(`Failed to cancel chase_email ${row.id}: ${cancelError.message}`);
+        cancelled++;
+        continue;
+      }
+    }
+
+    const result = await sendChaseEmail(row.id, clubId, adapter);
     if (result.sent) sent++;
     else if (result.reason === "send_failed") failed++;
     else cancelled++;
 
     // Small delay between sends to stay comfortably under Resend's
-    // per-second rate limit -- cheap at this scale (a society's debtor
-    // list is tens of rows, not thousands). NOTE: if the debtor list ever
-    // grows substantially, a serial delay loop inside one Vercel function
-    // invocation could approach its execution timeout -- not a concern
-    // today, but worth revisiting if batch size changes materially. See
-    // design.md's "Rate limiting" section.
+    // per-second rate limit -- cheap at this scale. See design.md's
+    // "Rate limiting" section.
     if (i < rowsToSend.length - 1) {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
 
-  return { sent, cancelled, failed };
+  return { sent, cancelled, failed, skipped };
 }

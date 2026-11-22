@@ -53,6 +53,7 @@ export interface PurchaseRecord {
   isStudent: boolean;
   matchStatus: MatchResult['matchStatus'];
   purchasedAt: Date;
+  pricePence: number | null;       // product price snapshot at ingest
 }
 
 // Return from ingestPurchases()
