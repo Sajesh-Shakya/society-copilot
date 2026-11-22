@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { formatPounds, signupBand, owedRange } from "@/lib/dashboard/format";
+import { formatPounds, signupBand, owedRange, formatSessionLabel } from "@/lib/dashboard/format";
 import { validateTargets } from "@/lib/dashboard/targets";
 
 test("formatPounds", () => {
@@ -27,4 +27,10 @@ test("validateTargets rejects min above target and bad numbers", () => {
   expect(validateTargets({ signupTarget: 10, signupMin: 15 })).toHaveProperty("error");
   expect(validateTargets({ signupTarget: -1, signupMin: 0 })).toHaveProperty("error");
   expect(validateTargets({ signupTarget: 1.5, signupMin: 1 })).toHaveProperty("error");
+});
+
+test("formatSessionLabel shows weekday, date and UK local time", () => {
+  expect(formatSessionLabel("2026-11-10T19:00:00Z")).toBe("Tue 10 Nov, 19:00");
+  // BST: 18:00Z in July is 19:00 in London
+  expect(formatSessionLabel("2026-07-07T18:00:00Z")).toBe("Tue 7 Jul, 19:00");
 });

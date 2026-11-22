@@ -22,3 +22,19 @@ export function owedRange(sessions: number, prices: number[]): { lowPence: numbe
   if (prices.length === 0) return null;
   return { lowPence: sessions * Math.min(...prices), highPence: sessions * Math.max(...prices) };
 }
+
+// "Tue 10 Nov, 19:00" in UK local time, so sessions on the same day are told
+// apart by their start time.
+export function formatSessionLabel(iso: string): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(iso));
+  const p = (t: string) => parts.find((x) => x.type === t)?.value ?? "";
+  return p("weekday") + " " + p("day") + " " + p("month") + ", " + p("hour") + ":" + p("minute");
+}

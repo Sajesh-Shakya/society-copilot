@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { PendingLink } from "@/components/nav/pending-link";
 import { requireAdmin, UnauthorizedError } from "@/lib/auth/require-admin";
 import { getDashboard } from "@/lib/dashboard/queries";
-import { formatPounds, owedRange, signupBand } from "@/lib/dashboard/format";
+import { formatPounds, formatSessionLabel, owedRange, signupBand } from "@/lib/dashboard/format";
 import { TargetsForm } from "@/components/dashboard/targets-form";
 import { clubPath } from "@/lib/club-path";
 
@@ -42,6 +42,7 @@ export default async function DashboardPage({
   const { signupTarget, signupMin } = d.targets;
   const band = signupBand(d.averageSignups, signupTarget, signupMin);
   const range = owedRange(d.owed.sessions, d.singleSessionPrices);
+  const chartRows = [...d.signups].reverse(); // oldest first, every session in the range
   const maxBar = Math.max(signupTarget, ...d.signups.map((s) => s.signups), 1);
 
   return (
@@ -76,12 +77,10 @@ export default async function DashboardPage({
         {d.signups.length === 0 ? (
           <p className="mt-4 text-sm text-muted-foreground">No sessions in this range.</p>
         ) : (
-          <ul className="mt-4 space-y-1">
-            {d.signups.slice(0, 12).map((s) => (
-              <li key={s.sessionId} className="flex items-center gap-3 text-xs">
-                <span className="w-24 shrink-0 text-muted-foreground">
-                  {new Date(s.startsAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                </span>
+          <ul className="mt-4 max-h-96 space-y-1 overflow-y-auto">
+            {chartRows.map((s) => (
+              <li key={s.sessionId} className="flex items-center gap-3 text-xs" title={s.title}>
+                <span className="w-32 shrink-0 text-muted-foreground">{formatSessionLabel(s.startsAt)}</span>
                 <div className="relative h-4 flex-1 rounded bg-muted">
                   <div className="h-4 rounded bg-primary" style={{ width: `${(s.signups / maxBar) * 100}%` }} />
                   <div className="absolute inset-y-0 w-px bg-foreground" style={{ left: `${(signupTarget / maxBar) * 100}%` }} />
