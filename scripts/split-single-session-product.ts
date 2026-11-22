@@ -1,3 +1,5 @@
+// SUPERSEDED (2026-11-22): judo ended up with "Single Session Pass" as the £5
+// member product, so do NOT re-run this for judo (it would recreate "(Member)").
 // One-off: split "Single Session Pass" into Member (sales id 2922, £5) and
 // Non-member (sales id 2880, £8) products, re-pointing the uploads whose
 // filename contains Product_Sales_ID_<id>. Dry-run by default.
