@@ -14,6 +14,7 @@ import { EactivitiesNotConfiguredError } from "@/lib/eactivities/types";
 import { syncSessionAttendance } from "@/lib/attendance/sync";
 import { getSessionWithAttendance, assertSessionBelongsToClub } from "@/lib/attendance/queries";
 import { requireAdmin } from "@/lib/auth/require-admin";
+import { getRosterDebts } from "@/lib/attendance/debt";
 import { reapplyWaiversForPerson } from "@/lib/purchase/interface";
 import { createWalkInForClub, type WalkInResult } from "@/lib/attendance/walk-in";
 import type { walkInSchema } from "@/lib/identity/walk-in-schema";
@@ -297,4 +298,14 @@ export async function getAttendanceList(clubSlug: string, sessionId: string) {
   await assertSessionBelongsToClub(sessionId, clubId);
   const session = await getSessionWithAttendance(sessionId, clubId);
   return session?.attendance ?? [];
+}
+
+// Unpaid-session counts for everyone on a session's roster (personId -> count;
+// absent means 0). Computed live, so it already reflects any waiver applied by
+// a toggle that has returned.
+export async function getSessionDebts(clubSlug: string, sessionId: string): Promise<Record<string, number>> {
+  const { clubId } = await requireAdmin(clubSlug);
+  await assertSessionBelongsToClub(sessionId, clubId);
+  const session = await getSessionWithAttendance(sessionId, clubId);
+  return getRosterDebts(clubId, (session?.attendance ?? []).map((r) => r.personId));
 }

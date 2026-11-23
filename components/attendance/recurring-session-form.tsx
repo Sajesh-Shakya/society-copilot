@@ -70,7 +70,7 @@ export function RecurringSessionForm({ clubSlug }: { clubSlug: string }) {
         <FilePickerButton
           id="file"
           name="file"
-          accept=".csv"
+          accept=".csv,text/csv,text/comma-separated-values,application/csv,application/vnd.ms-excel"
           label="Choose CSV file"
           disabled={isPending}
           // FilePickerButton requires this prop; the file is read from the form on submit.

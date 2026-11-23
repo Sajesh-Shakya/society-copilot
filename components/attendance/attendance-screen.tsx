@@ -20,6 +20,7 @@ import {
   toggleAttendance,
   triggerManualSync,
   getAttendanceList,
+  getSessionDebts,
   setSessionCancelled,
 } from "@/lib/attendance/actions";
 import { reconcileRows } from "@/lib/attendance/reconcile";
@@ -54,6 +55,8 @@ export function AttendanceScreen({
   const [isSyncing, startSync] = useTransition();
   const [showEmails, setShowEmails] = useState(false);
   const [search, setSearch] = useState("");
+  // personId -> unpaid attended sessions (absent = 0). Always read from the server.
+  const [debts, setDebts] = useState<Record<string, number>>({});
   const [cancelledAt, setCancelledAt] = useState<string | null>(session.cancelledAt);
   const [isTogglingCancel, startCancelToggle] = useTransition();
   // Optimistic toggles not yet confirmed by the server (personId -> attended).
@@ -112,6 +115,19 @@ export function AttendanceScreen({
     };
   }, [session.id, clubSlug]);
 
+  function refreshDebts() {
+    getSessionDebts(clubSlug, session.id)
+      .then(setDebts)
+      .catch(() => {});
+  }
+
+  // Initial load, and again whenever the roster's membership changes.
+  const rosterKey = rows.map((r) => r.personId).join(",");
+  useEffect(() => {
+    refreshDebts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rosterKey]);
+
   function handleToggle(row: AttendanceRow, attended: boolean) {
     pendingToggles.current.set(row.personId, attended);
     setRows((prev) =>
@@ -123,7 +139,11 @@ export function AttendanceScreen({
       }
     };
     toggleAttendance(clubSlug, { sessionId: session.id, personId: row.personId, attended })
-      .then(settle)
+      .then(() => {
+        settle();
+        // The server has applied any matching purchase by now, so this read is exact.
+        refreshDebts();
+      })
       .catch(() => {
         settle();
         toast.error(`Couldn't update ${row.fullName}`);
@@ -231,6 +251,7 @@ export function AttendanceScreen({
           title={`Search results`}
           rows={searchResults}
           showEmails={showEmails}
+          debts={debts}
           onToggle={handleToggle}
           emptyMessage="No matches."
         />
@@ -240,6 +261,7 @@ export function AttendanceScreen({
             title="Not attended"
             rows={rows.filter((r) => !r.attended)}
             showEmails={showEmails}
+          debts={debts}
             onToggle={handleToggle}
             scrollable
           />
@@ -247,6 +269,7 @@ export function AttendanceScreen({
             title="Attended"
             rows={rows.filter((r) => r.attended)}
             showEmails={showEmails}
+          debts={debts}
             onToggle={handleToggle}
             scrollable
           />
@@ -276,6 +299,7 @@ function AttendanceGroup({
   title,
   rows,
   showEmails,
+  debts,
   onToggle,
   scrollable = false,
   emptyMessage = "None.",
@@ -283,6 +307,7 @@ function AttendanceGroup({
   title: string;
   rows: AttendanceRow[];
   showEmails: boolean;
+  debts: Record<string, number>;
   onToggle: (row: AttendanceRow, attended: boolean) => void;
   scrollable?: boolean;
   emptyMessage?: string;
@@ -309,7 +334,14 @@ function AttendanceGroup({
               />
             </TableCell>
             <TableCell className={row.attended ? "" : "text-muted-foreground"}>
-              <div>{row.fullName}</div>
+              <div>
+                {row.fullName}
+                {(debts[row.personId] ?? 0) > 0 && (
+                  <span className="ml-2 font-semibold text-red-600" title="Attended sessions not yet paid for">
+                    {debts[row.personId]} unpaid
+                  </span>
+                )}
+              </div>
               {showEmails && <div className="text-xs text-muted-foreground">{row.email}</div>}
             </TableCell>
           </TableRow>

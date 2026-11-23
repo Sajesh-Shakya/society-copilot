@@ -94,7 +94,7 @@ export function XlsxUploader({ clubSlug, products }: { clubSlug: string; product
 
       <FilePickerButton
         ref={pickerRef}
-        accept=".xlsx"
+        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         isLoading={isLoading}
         loadingLabel="Uploading…"
         label="Upload XLSX"
