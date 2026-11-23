@@ -90,7 +90,7 @@ export default async function PeopleReviewPage({
       <section className="mt-8">
         <h2 className="font-semibold">Same-name groups ({groups.length})</h2>
         <p className="text-sm text-muted-foreground">
-          People with the same full name. Check whether they are one person; if not, mark them as different.
+          People with the same full name. If they are one person, pick which record to keep and merge the rest into it; if not, mark them as different.
         </p>
         <div className="mt-3">
           <SameNameGroups clubSlug={clubSlug} groups={groups} />

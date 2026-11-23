@@ -9,6 +9,8 @@ import {
   PURCHASE_NOT_UNMATCHED,
   type MatchPurchaseResult,
 } from "@/lib/identity/match-purchase";
+import { mergePeople } from "@/lib/identity/merge";
+import { loadClubPeople, nameKeyOf } from "@/lib/identity/review-queries";
 import { suggestPersonsForPurchase, type PersonSuggestion } from "@/lib/identity/suggestions";
 import {
   CID_TAKEN,
@@ -156,4 +158,31 @@ export async function dismissSameNameGroupAction(
   if (!parsed.success) return { error: "Invalid group." };
   await dismissSameNameGroup(clubId, parsed.data.nameKey, parsed.data.membersHash, email);
   return { ok: true };
+}
+
+const mergeInputSchema = z.object({
+  keepId: z.string().uuid(),
+  mergeIds: z.array(z.string().uuid()).min(1).max(20),
+});
+
+/** "Same person": merges the chosen duplicates into the kept person. */
+export async function mergeSameNameAction(
+  clubSlug: string,
+  keepId: string,
+  mergeIds: string[],
+): Promise<{ ok: true; merged: number } | { error: string }> {
+  const { clubId, email } = await requireAdmin(clubSlug);
+  const parsed = mergeInputSchema.safeParse({ keepId, mergeIds });
+  if (!parsed.success) return { error: "Invalid selection." };
+  if (parsed.data.mergeIds.includes(parsed.data.keepId)) return { error: "Choose a different person to keep." };
+  // Only people who share a name can be merged from here.
+  const people = await loadClubPeople(clubId);
+  const byId = new Map(people.map((p) => [p.id, p]));
+  const chosen = [parsed.data.keepId, ...parsed.data.mergeIds].map((id) => byId.get(id));
+  if (chosen.some((p) => !p)) return { error: "Person not found." };
+  if (new Set(chosen.map((p) => nameKeyOf(p!.full_name ?? ""))).size !== 1) {
+    return { error: "These people do not share a name." };
+  }
+  const result = await mergePeople(clubId, parsed.data.keepId, parsed.data.mergeIds, email);
+  return { ok: true, merged: result.merged };
 }
