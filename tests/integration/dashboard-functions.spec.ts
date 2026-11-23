@@ -211,6 +211,7 @@ test("getDashboard aggregates averages, revenue and owed from the SQL functions"
   const before = await owed(judoClubId);
   const s1 = await makeSession(judoClubId, "2099-05-01T18:00:00Z");
   const s2 = await makeSession(judoClubId, "2099-05-08T18:00:00Z");
+  await makeSession(judoClubId, "2099-05-15T18:00:00Z"); // no signups at all: must not appear
   const p1 = await makePerson(judoClubId);
   const p2 = await makePerson(judoClubId);
   const p3 = await makePerson(judoClubId);

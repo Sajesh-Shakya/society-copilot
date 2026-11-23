@@ -68,7 +68,7 @@ export async function getDashboard(clubId: string, range: { start: Date; end: Da
     startsAt: r.starts_at,
     signups: Number(r.signups),
     attended: Number(r.attended),
-  }));
+  })).filter((s) => s.signups > 0); // sessions nobody signed up to aren't real sessions
 
   const revenue: RevenueRow[] = (revenueRes.data as {
     product_id: string; product_name: string; purchases: number; unpriced: number; revenue_pence: number;

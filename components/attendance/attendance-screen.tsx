@@ -320,6 +320,9 @@ function AttendanceGroup({
           <TableHead className={scrollable ? "sticky top-0 z-10 bg-background" : undefined}>
             Name
           </TableHead>
+          <TableHead className={scrollable ? "sticky top-0 z-10 bg-background text-right text-red-600" : "text-right text-red-600"}>
+            Unpaid
+          </TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -334,21 +337,17 @@ function AttendanceGroup({
               />
             </TableCell>
             <TableCell className={row.attended ? "" : "text-muted-foreground"}>
-              <div>
-                {row.fullName}
-                {(debts[row.personId] ?? 0) > 0 && (
-                  <span className="ml-2 font-semibold text-red-600" title="Attended sessions not yet paid for">
-                    {debts[row.personId]} unpaid
-                  </span>
-                )}
-              </div>
+              <div>{row.fullName}</div>
               {showEmails && <div className="text-xs text-muted-foreground">{row.email}</div>}
+            </TableCell>
+            <TableCell className="text-right font-semibold text-red-600" title="Attended sessions not yet paid for">
+              {(debts[row.personId] ?? 0) > 0 ? debts[row.personId] : ""}
             </TableCell>
           </TableRow>
         ))}
         {rows.length === 0 && (
           <TableRow>
-            <TableCell colSpan={2} className="py-4 text-center text-sm text-muted-foreground">
+            <TableCell colSpan={3} className="py-4 text-center text-sm text-muted-foreground">
               {emptyMessage}
             </TableCell>
           </TableRow>

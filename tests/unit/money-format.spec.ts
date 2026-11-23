@@ -29,8 +29,9 @@ test("validateTargets rejects min above target and bad numbers", () => {
   expect(validateTargets({ signupTarget: 1.5, signupMin: 1 })).toHaveProperty("error");
 });
 
-test("formatSessionLabel shows weekday, date and UK local time", () => {
-  expect(formatSessionLabel("2026-11-10T19:00:00Z")).toBe("Tue 10 Nov, 19:00");
+test("formatSessionLabel is dd/mm h:mm AM/PM in UK local time", () => {
+  expect(formatSessionLabel("2026-11-10T19:00:00Z")).toBe("10/11 7:00 PM");
   // BST: 18:00Z in July is 19:00 in London
-  expect(formatSessionLabel("2026-07-07T18:00:00Z")).toBe("Tue 7 Jul, 19:00");
+  expect(formatSessionLabel("2026-07-07T18:00:00Z")).toBe("07/07 7:00 PM");
+  expect(formatSessionLabel("2026-11-10T00:05:00Z")).toBe("10/11 12:05 AM");
 });

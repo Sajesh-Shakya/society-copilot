@@ -23,18 +23,17 @@ export function owedRange(sessions: number, prices: number[]): { lowPence: numbe
   return { lowPence: sessions * Math.min(...prices), highPence: sessions * Math.max(...prices) };
 }
 
-// "Tue 10 Nov, 19:00" in UK local time, so sessions on the same day are told
-// apart by their start time.
+// "10/11 7:00 PM" (dd/mm h:mm AM/PM) in UK local time: compact, and sessions
+// on the same day are told apart by start time.
 export function formatSessionLabel(iso: string): string {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Europe/London",
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
+    day: "2-digit",
+    month: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
-    hour12: false,
+    hour12: true,
   }).formatToParts(new Date(iso));
   const p = (t: string) => parts.find((x) => x.type === t)?.value ?? "";
-  return p("weekday") + " " + p("day") + " " + p("month") + ", " + p("hour") + ":" + p("minute");
+  return p("day") + "/" + p("month") + " " + p("hour") + ":" + p("minute") + " " + p("dayPeriod").toUpperCase();
 }
