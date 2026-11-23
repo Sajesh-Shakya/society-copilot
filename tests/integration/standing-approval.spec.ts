@@ -189,8 +189,11 @@ test("approveChaseEmailAndRemember approves the email and records standing appro
   await generateChaseEmails(clubId);
   const [row] = await chaseRow(a);
   expect(row.status).toBe("pending_approval");
-  expect(await approveChaseEmailAndRemember(row.id, clubId, "admin@example.test")).toEqual({ approved: true });
-  expect((await chaseRow(a))[0].status).toBe("approved");
+  const { adapter, sent } = fakeAdapter();
+  expect(await approveChaseEmailAndRemember(row.id, clubId, "admin@example.test", adapter)).toEqual({ approved: true, sent: true });
+  // One click both approves and sends: no separate Send step.
+  expect(sent).toHaveLength(1);
+  expect((await chaseRow(a))[0].status).toBe("sent");
   const { data: person } = await admin.from("person").select("chase_auto_approved_at, chase_auto_approved_by").eq("id", a).single();
   expect(person!.chase_auto_approved_by).toBe("admin@example.test");
   expect(person!.chase_auto_approved_at).not.toBeNull();

@@ -46,7 +46,9 @@ export function ApprovalActions({
     try {
       const result = await approveChaseAndRemember(clubSlug, chaseEmailId);
       if (result.approved) {
-        toast.success("Approved. Future reminders to this person will send automatically.");
+        if (result.sent) toast.success("Sent. Future reminders to this person will send automatically.");
+        else if (result.reason === "send_failed") toast.error("Approved, but the send failed -- see chase inbox.");
+        else toast.error("Approved, but not sent (no longer owed, or person is exempt).");
         router.refresh();
       } else {
         toast.error("Could not approve -- this draft may have already been actioned.");

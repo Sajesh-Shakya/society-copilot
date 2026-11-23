@@ -1,5 +1,8 @@
 import { z } from "zod";
 import { createClubScopedClient } from "@/lib/supabase/club-scoped";
+import { sendChaseEmail } from "@/lib/chase/send";
+import type { EmailChannelAdapter } from "@/lib/email/types";
+import { resendEmailAdapter } from "@/lib/email/resend-adapter";
 
 const rejectChaseEmailSchema = z.object({
   chaseEmailId: z.string().uuid(),
@@ -101,11 +104,15 @@ export async function revokeStandingApproval(personId: string, clubId: string): 
   return { revoked: (data?.length ?? 0) > 0 };
 }
 
+// One click: approve, remember the person, and send this email now. The
+// admin's click is the human approval; sendChaseEmail still re-checks that the
+// person is not exempt and still owes before anything goes out.
 export async function approveChaseEmailAndRemember(
   chaseEmailId: string,
   clubId: string,
-  actorEmail: string
-): Promise<{ approved: boolean }> {
+  actorEmail: string,
+  adapter: EmailChannelAdapter = resendEmailAdapter
+): Promise<{ approved: boolean; sent?: boolean; reason?: string }> {
   const result = await approveChaseEmail(chaseEmailId, clubId, actorEmail);
   if (!result.approved) return result;
   const scoped = createClubScopedClient(clubId);
@@ -116,5 +123,6 @@ export async function approveChaseEmailAndRemember(
     .maybeSingle()) as unknown as { data: { person_id: string } | null; error: { message: string } | null };
   if (error) throw new Error(`Failed to look up chase_email ${chaseEmailId}: ${error.message}`);
   if (data) await grantStandingApproval(data.person_id, clubId, actorEmail);
-  return result;
+  const sendResult = await sendChaseEmail(chaseEmailId, clubId, adapter);
+  return { approved: true, ...sendResult };
 }

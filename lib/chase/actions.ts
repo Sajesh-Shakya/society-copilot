@@ -33,7 +33,7 @@ export async function rejectChase(clubSlug: string, chaseEmailId: string, note: 
   return rejectChaseEmail(chaseEmailId, admin.clubId, note, admin.email);
 }
 
-export async function approveChaseAndRemember(clubSlug: string, chaseEmailId: string): Promise<{ approved: boolean }> {
+export async function approveChaseAndRemember(clubSlug: string, chaseEmailId: string): Promise<{ approved: boolean; sent?: boolean; reason?: string }> {
   const admin = await requireAdmin(clubSlug);
   return approveChaseEmailAndRemember(chaseEmailId, admin.clubId, admin.email);
 }
